@@ -8,3 +8,22 @@ venv/
 dist/
 build/
 .pytest_cache/
+
+# Data files (downloaded, not committed)
+data/raw/
+data/db/
+data/_*
+data/*.log
+*.zip
+*.duckdb
+*.duckdb.wal
+
+# IDE
+.vscode/
+
+# Temp backup files
+*.bak
+
+# Temp debug scripts
+scripts/_*
+scripts/__pycache__/

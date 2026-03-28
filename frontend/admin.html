@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Management — Cricket Statistician AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
+            min-height: 100vh;
+        }
+
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+
+        header h1 { font-size: 18px; font-weight: 600; }
+        header .badge {
+            font-size: 11px; background: #fef3c7; color: #92400e;
+            padding: 2px 8px; border-radius: 10px;
+        }
+        header nav { margin-left: auto; display: flex; gap: 16px; }
+        header nav a {
+            font-size: 13px; color: #555; text-decoration: none;
+            padding: 4px 8px; border-radius: 6px; transition: background 0.2s;
+        }
+        header nav a:hover { background: #f0f0f0; }
+        header nav a.active { color: #16a34a; font-weight: 600; }
+
+        .container {
+            max-width: 960px;
+            margin: 24px auto;
+            padding: 0 24px;
+        }
+
+        .section {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+
+        .section h2 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section h2 .icon { font-size: 18px; }
+
+        /* Source cards */
+        .source-cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .source-card {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .source-card h3 {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+
+        .source-card .stat-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            padding: 4px 0;
+            border-bottom: 1px solid #f3f4f6;
+        }
+
+        .source-card .stat-row:last-child { border-bottom: none; }
+        .source-card .stat-label { color: #777; }
+        .source-card .stat-value { font-weight: 600; color: #1a1a1a; }
+
+        /* Table counts */
+        .table-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .table-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        .table-item .name {
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            color: #555;
+        }
+
+        .table-item .count {
+            font-weight: 700;
+            color: #1a1a1a;
+        }
+
+        /* Action buttons */
+        .actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .action-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 16px;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            background: #fff;
+            cursor: pointer;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .action-btn:hover {
+            border-color: #16a34a;
+            box-shadow: 0 2px 8px rgba(22,163,74,0.1);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            border-color: #e5e7eb;
+            box-shadow: none;
+        }
+
+        .action-btn .btn-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 4px;
+        }
+
+        .action-btn .btn-desc {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .action-btn.full-width {
+            grid-column: 1 / -1;
+            border-color: #16a34a;
+            background: #f0fdf4;
+        }
+
+        .action-btn.full-width .btn-title { color: #166534; }
+
+        /* Log output */
+        .log-panel {
+            display: none;
+            margin-top: 16px;
+            background: #1e293b;
+            color: #94a3b8;
+            border-radius: 10px;
+            padding: 16px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-panel.visible { display: block; }
+
+        .log-panel .log-success { color: #4ade80; }
+        .log-panel .log-error { color: #f87171; }
+        .log-panel .log-info { color: #60a5fa; }
+
+        /* Spinner */
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #d1d5db;
+            border-top-color: #16a34a;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Status indicator */
+        .status-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .status-dot.green { background: #22c55e; }
+        .status-dot.yellow { background: #eab308; }
+        .status-dot.red { background: #ef4444; }
+
+        /* Loading placeholder */
+        .loading-text {
+            color: #aaa;
+            font-style: italic;
+            font-size: 13px;
+        }
+
+        /* Cricsheet type table */
+        .type-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-top: 10px;
+        }
+
+        .type-table th {
+            text-align: left;
+            padding: 8px 12px;
+            background: #f1f5f9;
+            color: #475569;
+            font-weight: 600;
+            border-bottom: 2px solid #cbd5e1;
+        }
+
+        .type-table td {
+            padding: 6px 12px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .type-table tr:hover td { background: #f8fafc; }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 0; margin-bottom: 20px; }
+        .tabs button {
+            padding: 10px 24px; font-size: 14px; font-weight: 600;
+            border: 1px solid #e0e0e0; background: #fff; color: #666;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .tabs button:first-child { border-radius: 8px 0 0 8px; }
+        .tabs button:last-child { border-radius: 0 8px 8px 0; }
+        .tabs button:not(:first-child) { border-left: none; }
+        .tabs button.active { background: #16a34a; color: #fff; border-color: #16a34a; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* KB styles */
+        .kb-toolbar {
+            display: flex; gap: 10px; align-items: center;
+            margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .kb-toolbar select, .kb-toolbar input {
+            padding: 6px 12px; font-size: 13px; border: 1px solid #d1d5db;
+            border-radius: 6px; background: #fff;
+        }
+        .kb-toolbar input { flex: 1; min-width: 200px; }
+        .kb-add-btn {
+            padding: 6px 16px; font-size: 13px; font-weight: 600;
+            background: #16a34a; color: #fff; border: none; border-radius: 6px;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .kb-add-btn:hover { background: #15803d; }
+        .kb-fact {
+            display: flex; align-items: flex-start; gap: 12px;
+            padding: 12px 16px; border: 1px solid #e5e7eb; border-radius: 8px;
+            margin-bottom: 8px; background: #fff; transition: border-color 0.2s;
+        }
+        .kb-fact:hover { border-color: #16a34a; }
+        .kb-fact.inactive { opacity: 0.5; }
+        .kb-fact-text { flex: 1; font-size: 13px; line-height: 1.5; }
+        .kb-fact-cat {
+            font-size: 11px; background: #e0f2fe; color: #0369a1;
+            padding: 2px 8px; border-radius: 10px; white-space: nowrap;
+        }
+        .kb-fact-actions { display: flex; gap: 6px; align-items: center; }
+        .kb-fact-actions button {
+            padding: 4px 8px; font-size: 11px; border: 1px solid #d1d5db;
+            border-radius: 4px; background: #fff; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .kb-fact-actions button:hover { background: #f0f0f0; }
+        .kb-fact-actions button.toggle-btn { font-size: 16px; border: none; background: none; }
+        .kb-fact-actions button.delete-btn { color: #dc2626; border-color: #fca5a5; }
+        .kb-fact-actions button.delete-btn:hover { background: #fef2f2; }
+        .kb-fact-actions button.approve-btn { color: #16a34a; border-color: #86efac; }
+        .kb-fact-actions button.approve-btn:hover { background: #f0fdf4; }
+        .kb-fact-actions button.reject-btn { color: #dc2626; border-color: #fca5a5; }
+        .kb-fact-actions button.reject-btn:hover { background: #fef2f2; }
+        .kb-pending-header {
+            font-size: 14px; font-weight: 600; color: #92400e;
+            background: #fef3c7; padding: 8px 14px; border-radius: 8px;
+            margin-bottom: 12px; display: flex; align-items: center; gap: 8px;
+        }
+        .kb-empty { color: #aaa; font-style: italic; font-size: 13px; padding: 12px 0; }
+        .kb-count { font-size: 12px; color: #888; margin-left: auto; }
+
+        /* Add fact modal */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4); z-index: 1000; align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal {
+            background: #fff; border-radius: 12px; padding: 24px;
+            width: 480px; max-width: 90vw; box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+        }
+        .modal h3 { font-size: 16px; margin-bottom: 16px; }
+        .modal label { font-size: 13px; font-weight: 600; color: #555; display: block; margin-bottom: 4px; }
+        .modal textarea, .modal select {
+            width: 100%; padding: 8px 12px; font-size: 13px; border: 1px solid #d1d5db;
+            border-radius: 6px; margin-bottom: 12px; font-family: inherit;
+        }
+        .modal textarea { resize: vertical; min-height: 80px; }
+        .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+        .modal-actions button {
+            padding: 8px 20px; font-size: 13px; font-weight: 600;
+            border-radius: 6px; cursor: pointer; border: 1px solid #d1d5db;
+            background: #fff; transition: all 0.2s;
+        }
+        .modal-actions button.primary {
+            background: #16a34a; color: #fff; border-color: #16a34a;
+        }
+        .modal-actions button.primary:hover { background: #15803d; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Cricket Statistician AI</h1>
+        <span class="badge">Data Management</span>
+        <nav>
+            <a href="/">Chat</a>
+            <a href="/admin" class="active">Data Management</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <!-- Tab switcher -->
+        <div class="tabs">
+            <button class="active" onclick="switchTab('data', this)">Data Management</button>
+            <button onclick="switchTab('kb', this)">Knowledge Base</button>
+        </div>
+
+        <!-- ═══════ DATA MANAGEMENT TAB ═══════ -->
+        <div class="tab-content active" id="tab-data">
+        <div class="section">
+            <h2><span class="icon">📊</span> Data Sources</h2>
+            <div class="source-cards" id="source-cards">
+                <div class="source-card">
+                    <h3>Kaggle — Test Matches</h3>
+                    <div id="kaggle-stats"><span class="loading-text">Loading...</span></div>
+                </div>
+                <div class="source-card">
+                    <h3>Player Mapping</h3>
+                    <div id="player-stats"><span class="loading-text">Loading...</span></div>
+                </div>
+            </div>
+
+            <div style="margin-top: 16px;">
+                <h3 style="font-size: 13px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                    Cricsheet — Ball by Ball
+                </h3>
+                <div id="cricsheet-stats"><span class="loading-text">Loading...</span></div>
+            </div>
+        </div>
+
+        <!-- Table Row Counts -->
+        <div class="section">
+            <h2><span class="icon">🗃️</span> Table Row Counts</h2>
+            <div class="table-grid" id="table-grid">
+                <span class="loading-text">Loading...</span>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="section">
+            <h2><span class="icon">⚡</span> Actions</h2>
+            <div class="actions">
+                <button class="action-btn" onclick="runAction('refresh-cricsheet', this)">
+                    <span class="btn-title">Refresh Cricsheet</span>
+                    <span class="btn-desc">Download latest ball-by-ball data and reload DB</span>
+                </button>
+                <button class="action-btn" onclick="runAction('refresh-kaggle', this)">
+                    <span class="btn-title">Refresh Kaggle</span>
+                    <span class="btn-desc">Re-download Test match scorecards and reload DB</span>
+                </button>
+                <button class="action-btn" onclick="runAction('backfill', this)">
+                    <span class="btn-title">Run Backfill</span>
+                    <span class="btn-desc">Sync missing Test matches from Cricsheet into Kaggle tables</span>
+                </button>
+                <button class="action-btn full-width" onclick="runAction('full-refresh', this)">
+                    <span class="btn-title">Full Refresh Pipeline</span>
+                    <span class="btn-desc">Download both sources → Load into DB → Backfill missing Tests (takes several minutes)</span>
+                </button>
+            </div>
+            <div class="log-panel" id="log-panel"></div>
+        </div>
+        </div><!-- end tab-data -->
+
+        <!-- ═══════ KNOWLEDGE BASE TAB ═══════ -->
+        <div class="tab-content" id="tab-kb">
+            <div class="section">
+                <h2><span class="icon">🧠</span> Knowledge Base <span class="kb-count" id="kb-count"></span></h2>
+                <div class="kb-toolbar">
+                    <select id="kb-filter" onchange="renderKB()">
+                        <option value="">All Categories</option>
+                        <option value="player_anomaly">Player Anomaly</option>
+                        <option value="venue">Venue</option>
+                        <option value="team_history">Team History</option>
+                        <option value="competition">Competition</option>
+                        <option value="rules">Rules</option>
+                        <option value="data_format">Data Format</option>
+                        <option value="historical">Historical</option>
+                        <option value="records">Records</option>
+                    </select>
+                    <input type="text" id="kb-search" placeholder="Search facts..." oninput="renderKB()">
+                    <button class="kb-add-btn" onclick="openAddModal()">+ Add Fact</button>
+                </div>
+                <div id="kb-facts-list"><span class="loading-text">Loading...</span></div>
+            </div>
+
+            <div class="section" id="kb-pending-section" style="display:none;">
+                <div class="kb-pending-header">
+                    <span>⏳</span> Pending Review — AI-Discovered Facts
+                    <span class="kb-count" id="kb-pending-count"></span>
+                </div>
+                <div id="kb-pending-list"></div>
+            </div>
+        </div><!-- end tab-kb -->
+    </div>
+
+    <!-- Add/Edit Fact Modal -->
+    <div class="modal-overlay" id="fact-modal">
+        <div class="modal">
+            <h3 id="modal-title">Add Fact</h3>
+            <label>Fact Text</label>
+            <textarea id="modal-text" placeholder="e.g. Sachin Tendulkar played 200 Tests total but only 199 for India..."></textarea>
+            <label>Category</label>
+            <select id="modal-category">
+                <option value="player_anomaly">Player Anomaly</option>
+                <option value="venue">Venue</option>
+                <option value="team_history">Team History</option>
+                <option value="competition">Competition</option>
+                <option value="rules">Rules</option>
+                <option value="data_format">Data Format</option>
+                <option value="historical">Historical</option>
+                <option value="records">Records</option>
+            </select>
+            <div class="modal-actions">
+                <button onclick="closeModal()">Cancel</button>
+                <button class="primary" id="modal-save" onclick="saveFact()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ═══════ TABS ═══════
+        function switchTab(tab, btn) {
+            document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + tab).classList.add('active');
+            if (tab === 'kb') loadKB();
+        }
+
+        // ═══════ DATA MANAGEMENT ═══════
+        loadStatus();
+
+        async function loadStatus() {
+            try {
+                const resp = await fetch('/api/admin/status');
+                const data = await resp.json();
+                renderStatus(data);
+            } catch (err) {
+                document.getElementById('kaggle-stats').innerHTML =
+                    '<span style="color:#dc2626;">Failed to load status</span>';
+            }
+        }
+
+        function renderStatus(data) {
+            // Kaggle Test stats
+            const kaggle = data.sources?.kaggle_tests;
+            if (kaggle) {
+                document.getElementById('kaggle-stats').innerHTML = `
+                    <div class="stat-row"><span class="stat-label">Matches</span><span class="stat-value">${kaggle.match_count.toLocaleString()}</span></div>
+                    <div class="stat-row"><span class="stat-label">Date Range</span><span class="stat-value">${kaggle.min_date} → ${kaggle.max_date}</span></div>
+                    <div class="stat-row"><span class="stat-label">Status</span><span class="stat-value"><span class="status-dot green"></span>Complete (1877–present)</span></div>
+                `;
+            }
+
+            // Player map
+            const pmap = data.sources?.player_map;
+            if (pmap) {
+                document.getElementById('player-stats').innerHTML = `
+                    <div class="stat-row"><span class="stat-label">Total Players</span><span class="stat-value">${pmap.total.toLocaleString()}</span></div>
+                    <div class="stat-row"><span class="stat-label">Fully Mapped</span><span class="stat-value">${pmap.fully_mapped.toLocaleString()}</span></div>
+                    <div class="stat-row"><span class="stat-label">Coverage</span><span class="stat-value">${(pmap.fully_mapped / pmap.total * 100).toFixed(1)}%</span></div>
+                `;
+            }
+
+            // Cricsheet by match type
+            const cricsheet = data.sources?.cricsheet;
+            if (cricsheet && cricsheet.length > 0) {
+                let html = '<table class="type-table"><tr><th>Format</th><th>Matches</th><th>From</th><th>To</th></tr>';
+                for (const row of cricsheet) {
+                    html += `<tr>
+                        <td><strong>${row.type}</strong></td>
+                        <td>${row.count.toLocaleString()}</td>
+                        <td>${row.min_date}</td>
+                        <td>${row.max_date}</td>
+                    </tr>`;
+                }
+                html += '</table>';
+                document.getElementById('cricsheet-stats').innerHTML = html;
+            }
+
+            // Table counts
+            const tables = data.tables || {};
+            const grid = document.getElementById('table-grid');
+            const sortedTables = Object.entries(tables).sort((a, b) => b[1] - a[1]);
+            grid.innerHTML = sortedTables.map(([name, count]) => `
+                <div class="table-item">
+                    <span class="name">${name}</span>
+                    <span class="count">${count.toLocaleString()}</span>
+                </div>
+            `).join('');
+        }
+
+        let running = false;
+
+        async function runAction(action, btn) {
+            if (running) return;
+            running = true;
+
+            // Disable all buttons
+            document.querySelectorAll('.action-btn').forEach(b => b.disabled = true);
+
+            const titleEl = btn.querySelector('.btn-title');
+            const origTitle = titleEl.textContent;
+            titleEl.innerHTML = origTitle + '<span class="spinner"></span>';
+
+            const logPanel = document.getElementById('log-panel');
+            logPanel.className = 'log-panel visible';
+            logPanel.textContent = `Starting ${action}...\n`;
+
+            try {
+                const resp = await fetch(`/api/admin/${action}`, { method: 'POST' });
+                const data = await resp.json();
+
+                if (data.log) {
+                    logPanel.textContent = data.log;
+                }
+
+                if (data.status === 'ok') {
+                    logPanel.textContent += '\n✅ Completed successfully.';
+                } else {
+                    logPanel.textContent += '\n⚠️ Completed with warnings.';
+                }
+
+                // Refresh status
+                await loadStatus();
+            } catch (err) {
+                logPanel.textContent += `\n❌ Error: ${err.message}`;
+            }
+
+            titleEl.textContent = origTitle;
+            document.querySelectorAll('.action-btn').forEach(b => b.disabled = false);
+            running = false;
+
+            // Scroll log to bottom
+            logPanel.scrollTop = logPanel.scrollHeight;
+        }
+
+        // ═══════ KNOWLEDGE BASE ═══════
+        let kbData = { facts: [], pending: [] };
+        let editingId = null;
+
+        async function loadKB() {
+            try {
+                const resp = await fetch('/api/admin/knowledge');
+                kbData = await resp.json();
+                renderKB();
+                renderPending();
+            } catch (err) {
+                document.getElementById('kb-facts-list').innerHTML =
+                    '<span style="color:#dc2626;">Failed to load knowledge base</span>';
+            }
+        }
+
+        function renderKB() {
+            const filter = document.getElementById('kb-filter').value;
+            const search = document.getElementById('kb-search').value.toLowerCase();
+            let facts = kbData.facts || [];
+            if (filter) facts = facts.filter(f => f.category === filter);
+            if (search) facts = facts.filter(f => f.text.toLowerCase().includes(search));
+
+            const active = facts.filter(f => f.active).length;
+            document.getElementById('kb-count').textContent = `${active} active / ${facts.length} total`;
+
+            if (facts.length === 0) {
+                document.getElementById('kb-facts-list').innerHTML =
+                    '<div class="kb-empty">No facts found.</div>';
+                return;
+            }
+
+            document.getElementById('kb-facts-list').innerHTML = facts.map(f => `
+                <div class="kb-fact ${f.active ? '' : 'inactive'}">
+                    <div class="kb-fact-text">${escHtml(f.text)}</div>
+                    <span class="kb-fact-cat">${f.category}</span>
+                    <div class="kb-fact-actions">
+                        <button class="toggle-btn" title="${f.active ? 'Deactivate' : 'Activate'}"
+                            onclick="toggleFact('${f.id}')">${f.active ? '✅' : '⬜'}</button>
+                        <button onclick="editFact('${f.id}')">Edit</button>
+                        <button class="delete-btn" onclick="deleteFact('${f.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function renderPending() {
+            const pending = kbData.pending || [];
+            const section = document.getElementById('kb-pending-section');
+            if (pending.length === 0) {
+                section.style.display = 'none';
+                return;
+            }
+            section.style.display = 'block';
+            document.getElementById('kb-pending-count').textContent = `${pending.length} pending`;
+            document.getElementById('kb-pending-list').innerHTML = pending.map(p => `
+                <div class="kb-fact">
+                    <div class="kb-fact-text">
+                        ${escHtml(p.text)}
+                        <div style="font-size:11px;color:#888;margin-top:4px;">
+                            Source: ${escHtml(p.source || 'AI-discovered')}
+                        </div>
+                    </div>
+                    <span class="kb-fact-cat">${p.category}</span>
+                    <div class="kb-fact-actions">
+                        <button class="approve-btn" onclick="approvePending('${p.id}')">✓ Approve</button>
+                        <button class="reject-btn" onclick="rejectPending('${p.id}')">✗ Reject</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function toggleFact(id) {
+            await fetch(`/api/admin/knowledge/${id}/toggle`, { method: 'PATCH' });
+            await loadKB();
+        }
+
+        async function deleteFact(id) {
+            if (!confirm('Delete this fact?')) return;
+            await fetch(`/api/admin/knowledge/${id}`, { method: 'DELETE' });
+            await loadKB();
+        }
+
+        function editFact(id) {
+            const fact = kbData.facts.find(f => f.id === id);
+            if (!fact) return;
+            editingId = id;
+            document.getElementById('modal-title').textContent = 'Edit Fact';
+            document.getElementById('modal-text').value = fact.text;
+            document.getElementById('modal-category').value = fact.category;
+            document.getElementById('fact-modal').classList.add('visible');
+        }
+
+        function openAddModal() {
+            editingId = null;
+            document.getElementById('modal-title').textContent = 'Add Fact';
+            document.getElementById('modal-text').value = '';
+            document.getElementById('modal-category').value = 'player_anomaly';
+            document.getElementById('fact-modal').classList.add('visible');
+        }
+
+        function closeModal() {
+            document.getElementById('fact-modal').classList.remove('visible');
+        }
+
+        async function saveFact() {
+            const text = document.getElementById('modal-text').value.trim();
+            const category = document.getElementById('modal-category').value;
+            if (!text) return;
+
+            if (editingId) {
+                await fetch(`/api/admin/knowledge/${editingId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, category })
+                });
+            } else {
+                await fetch('/api/admin/knowledge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text, category })
+                });
+            }
+            closeModal();
+            await loadKB();
+        }
+
+        async function approvePending(id) {
+            await fetch(`/api/admin/knowledge/pending/${id}/approve`, { method: 'POST' });
+            await loadKB();
+        }
+
+        async function rejectPending(id) {
+            await fetch(`/api/admin/knowledge/pending/${id}/reject`, { method: 'POST' });
+            await loadKB();
+        }
+
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // Close modal on overlay click
+        document.getElementById('fact-modal').addEventListener('click', e => {
+            if (e.target === e.currentTarget) closeModal();
+        });
+    </script>
+</body>
+</html>

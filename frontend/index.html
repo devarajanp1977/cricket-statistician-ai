@@ -1,0 +1,2582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cricket Statistician AI</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #1a1a1a;
+            height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* ── Sidebar ─────────────────────────────────────────────── */
+        #sidebar {
+            width: 280px;
+            min-width: 280px;
+            background: #fff;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            transition: margin-left 0.25s ease;
+            z-index: 20;
+        }
+
+        #sidebar.collapsed { margin-left: -280px; }
+
+        .sidebar-header {
+            padding: 14px 16px;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .sidebar-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            flex: 1;
+        }
+
+        #new-chat-btn {
+            background: #16a34a;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            white-space: nowrap;
+        }
+
+        #new-chat-btn:hover { background: #15803d; }
+
+        .sidebar-search {
+            padding: 10px 16px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .sidebar-search input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 12px;
+            outline: none;
+            background: #f8f9fa;
+            color: #1a1a1a;
+        }
+
+        .sidebar-search input:focus { border-color: #16a34a; }
+
+        .sidebar-filters {
+            display: flex;
+            gap: 4px;
+            padding: 8px 16px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .filter-pill {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            border: 1px solid #e0e0e0;
+            background: #fff;
+            color: #777;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .filter-pill:hover { border-color: #16a34a; color: #16a34a; }
+        .filter-pill.active { background: #dcfce7; color: #166534; border-color: #86efac; }
+
+        #session-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 0;
+        }
+
+        .session-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            transition: background 0.15s;
+            position: relative;
+            border-left: 3px solid transparent;
+        }
+
+        .session-item:hover { background: #f8f9fa; }
+        .session-item.active { background: #f0fdf4; border-left-color: #16a34a; }
+
+        .session-info { flex: 1; min-width: 0; }
+
+        .session-title {
+            font-size: 13px;
+            font-weight: 500;
+            color: #1a1a1a;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .session-item.archived .session-title { color: #aaa; font-style: italic; }
+
+        .session-meta {
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 2px;
+        }
+
+        .session-actions {
+            display: none;
+            gap: 2px;
+            align-items: center;
+        }
+
+        .session-item:hover .session-actions { display: flex; }
+
+        .session-action-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 4px;
+            border-radius: 4px;
+            color: #aaa;
+            transition: color 0.15s, background 0.15s;
+            line-height: 1;
+        }
+
+        .session-action-btn:hover { color: #555; background: #e5e7eb; }
+        .session-action-btn.delete:hover { color: #dc2626; background: #fef2f2; }
+
+        .session-empty {
+            padding: 24px 16px;
+            text-align: center;
+            color: #bbb;
+            font-size: 13px;
+        }
+
+        /* ── Main area ───────────────────────────────────────────── */
+        #main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            min-width: 0;
+        }
+
+        header {
+            background: #fff;
+            border-bottom: 1px solid #e0e0e0;
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+
+        #sidebar-toggle {
+            background: none;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 16px;
+            color: #555;
+            transition: background 0.15s;
+            line-height: 1;
+        }
+
+        #sidebar-toggle:hover { background: #f1f5f9; }
+
+        header h1 { font-size: 16px; font-weight: 600; }
+
+        header .badge {
+            font-size: 11px;
+            background: #dcfce7;
+            color: #166534;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }
+
+        #db-stats { margin-left: auto; font-size: 12px; color: #888; }
+
+        .header-link {
+            font-size: 12px; color: #888; text-decoration: none;
+            padding: 4px 10px; border: 1px solid #e0e0e0; border-radius: 6px;
+            transition: border-color 0.15s;
+        }
+        .header-link:hover { border-color: #16a34a; color: #16a34a; }
+
+        /* Chat area */
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .message {
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .message.user {
+            background: #e8eaf6;
+            border: 1px solid #c5cae9;
+            border-radius: 12px;
+            padding: 14px 18px;
+        }
+
+        .message.user .label {
+            font-size: 11px; color: #3949ab; font-weight: 600;
+            margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        .message.assistant {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+
+        .message.assistant .label {
+            font-size: 11px; color: #16a34a; font-weight: 600;
+            margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        .message.assistant .answer {
+            line-height: 1.75; font-size: 14.5px; color: #2d3748;
+        }
+
+        /* ── Cricbuzz-style Stat Table ──────────────── */
+        .stat-section { margin-top: 14px; }
+        .stat-section-header {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 8px 16px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .stat-section-header.batting {
+            background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+            color: #3730a3;
+            border: 1px solid #c7d2fe;
+            border-bottom: none;
+        }
+        .stat-section-header.bowling {
+            background: linear-gradient(135deg, #fef2f2 0%, #fce7f3 100%);
+            color: #9f1239;
+            border: 1px solid #fecdd3;
+            border-bottom: none;
+        }
+        .stat-section-header.general {
+            background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+            color: #166534;
+            border: 1px solid #bbf7d0;
+            border-bottom: none;
+        }
+        .stat-section-header .section-icon { font-size: 13px; }
+
+        .stat-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            border: 1px solid #e2e8f0;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            overflow: hidden;
+        }
+        .stat-table th {
+            background: #f8fafc;
+            color: #64748b;
+            font-weight: 600;
+            text-align: right;
+            padding: 8px 12px;
+            border-bottom: 2px solid #e2e8f0;
+            white-space: nowrap;
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-table th:first-child { text-align: left; }
+        .stat-table td {
+            padding: 9px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #334155;
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .stat-table td:first-child {
+            text-align: left;
+            font-weight: 600;
+            color: #1e293b;
+        }
+        .stat-table tr:last-child td { border-bottom: none; }
+        .stat-table tr:hover td { background: #f8fafc; }
+        .stat-table td.primary-val {
+            font-weight: 700;
+            color: #166534;
+        }
+        .stat-table td.highlight-val {
+            font-weight: 700;
+            color: #1e40af;
+        }
+
+        /* ── Premium Data Table ────────────────────────────────── */
+        .data-table-wrapper {
+            margin-top: 14px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        }
+
+        .data-table-wrapper .table-header {
+            background: #f8fafc;
+            padding: 10px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .data-table-wrapper .table-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table-wrapper .row-count {
+            font-size: 11px;
+            color: #94a3b8;
+            background: #f1f5f9;
+            padding: 2px 10px;
+            border-radius: 10px;
+        }
+
+        .data-table-wrapper table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .data-table-wrapper th {
+            background: #f1f5f9;
+            color: #475569;
+            font-weight: 600;
+            text-align: left;
+            padding: 10px 16px;
+            border-bottom: 2px solid #cbd5e1;
+            white-space: nowrap;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            position: sticky;
+            top: 0;
+        }
+
+        .data-table-wrapper td {
+            padding: 10px 16px;
+            border-bottom: 1px solid #f1f5f9;
+            color: #334155;
+        }
+
+        .data-table-wrapper tr:nth-child(even) td { background: #fafbfc; }
+        .data-table-wrapper tr:hover td { background: #f0fdf4; }
+        .data-table-wrapper tr:last-child td { border-bottom: none; }
+
+        .data-table-wrapper td.num {
+            font-variant-numeric: tabular-nums;
+            font-weight: 500;
+            text-align: right;
+        }
+
+        .data-table-wrapper td.rank {
+            color: #94a3b8;
+            font-weight: 600;
+            width: 32px;
+            text-align: center;
+        }
+
+        .data-table-wrapper td.primary-val {
+            font-weight: 700;
+            color: #166534;
+        }
+
+        .data-table-wrapper .scroll-area {
+            overflow-x: auto;
+            max-height: 420px;
+            overflow-y: auto;
+        }
+
+        .message.assistant .sql-toggle {
+            margin-top: 12px; font-size: 12px; color: #94a3b8;
+            cursor: pointer; user-select: none;
+            display: flex; align-items: center; gap: 6px;
+            transition: color 0.15s;
+        }
+        .message.assistant .sql-toggle:hover { color: #475569; }
+
+        .message.assistant .sql-block {
+            display: none; margin-top: 8px; background: #1e293b;
+            border-radius: 8px; padding: 14px 16px;
+            font-family: 'Cascadia Code', 'Fira Code', monospace;
+            font-size: 12.5px; color: #94a3b8; overflow-x: auto;
+            white-space: pre; line-height: 1.6;
+        }
+
+        .message.error { border-color: #fca5a5; background: #fef2f2; }
+        .message.error .label { color: #dc2626; }
+
+        .model-tag {
+            display: inline-block;
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 6px;
+            font-style: italic;
+        }
+        .model-tag::before { content: 'powered by '; }
+
+        .retry-btn {
+            display: inline-block;
+            margin-top: 8px;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #dc2626;
+            background: #fff;
+            border: 1px solid #fca5a5;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .retry-btn:hover { background: #fef2f2; border-color: #dc2626; }
+
+        .disambiguate-card {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 14px;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+            background: #fff;
+        }
+        .disambiguate-card:hover { border-color: #16a34a; background: #f0fdf4; }
+        .disambiguate-card .player-name { font-weight: 600; font-size: 14px; color: #1a1a1a; }
+        .disambiguate-card .player-ctx { font-size: 12px; color: #64748b; }
+        .disambiguate-card .player-headshot {
+            width: 40px; height: 40px; border-radius: 50%; object-fit: cover;
+            border: 2px solid #e0e0e0; flex-shrink: 0; background: #f1f5f9;
+        }
+        .disambiguate-wrap {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+            max-width: 500px;
+        }
+        /* Player profile card */
+        .profile-card {
+            border: 1px solid #e0e0e0; border-radius: 12px; padding: 20px;
+            margin-top: 12px; background: #fff; max-width: 480px;
+            display: flex; gap: 20px; align-items: flex-start;
+        }
+        .profile-card .profile-photo {
+            width: 80px; height: 80px; border-radius: 50%; object-fit: cover;
+            border: 3px solid #16a34a; flex-shrink: 0; background: #f1f5f9;
+        }
+        .profile-card .profile-photo-placeholder {
+            width: 80px; height: 80px; border-radius: 50%;
+            border: 3px solid #e0e0e0; flex-shrink: 0; background: #f1f5f9;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 32px; color: #94a3b8;
+        }
+        .profile-card .profile-details { flex: 1; }
+        .profile-card .profile-name { font-size: 18px; font-weight: 700; color: #1a1a1a; margin-bottom: 4px; }
+        .profile-card .profile-role { font-size: 13px; color: #16a34a; font-weight: 600; margin-bottom: 8px; }
+        .profile-card .profile-meta { font-size: 12px; color: #64748b; line-height: 1.7; }
+        .profile-card .profile-meta span { display: inline-block; margin-right: 16px; }
+        .profile-card .profile-meta .label { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .profile-card .profile-teams { font-size: 12px; color: #475569; margin-top: 8px; line-height: 1.6; }
+        .profile-card .profile-badge {
+            display: inline-block; padding: 2px 8px; border-radius: 10px;
+            font-size: 11px; font-weight: 600; margin-left: 8px;
+        }
+        .profile-card .badge-active { background: #dcfce7; color: #16a34a; }
+        .profile-card .badge-retired { background: #f1f5f9; color: #64748b; }
+
+        .loading {
+            max-width: 800px; width: 100%; margin: 0 auto;
+            padding: 14px 18px; color: #888; font-style: italic;
+        }
+
+        .loading::after { content: ''; animation: dots 1.5s infinite; }
+
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60%, 100% { content: '...'; }
+        }
+
+        /* ── Chart ───────────────────────────────────────────────── */
+        .chart-wrapper {
+            margin-top: 14px;
+            position: relative;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+        }
+
+        .chart-container {
+            width: 60%;
+            min-width: 320px;
+            height: 320px;
+            margin: 0 auto;
+            transition: width 0.3s ease, height 0.3s ease;
+        }
+
+        .chart-container.expanded {
+            width: 100%;
+            height: 420px;
+        }
+
+        .chart-toolbar {
+            position: absolute;
+            top: 8px;
+            right: 10px;
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 5;
+        }
+
+        .chart-wrapper:hover .chart-toolbar { opacity: 1; }
+
+        .chart-tool-btn {
+            background: rgba(255,255,255,0.92);
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 11px;
+            cursor: pointer;
+            color: #555;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            transition: border-color 0.15s, background 0.15s;
+            white-space: nowrap;
+        }
+
+        .chart-tool-btn:hover { border-color: #16a34a; color: #16a34a; background: #f0fdf4; }
+
+        .chart-tool-btn .check {
+            color: #16a34a;
+            font-weight: 700;
+            display: none;
+        }
+
+        .chart-tool-btn.copied .check { display: inline; }
+        .chart-tool-btn.copied span:not(.check) { display: none; }
+
+        /* ── Input area ──────────────────────────────────────────── */
+        #input-area {
+            background: #fff;
+            border-top: 1px solid #e0e0e0;
+            padding: 14px 20px;
+        }
+
+        #input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            display: flex;
+            gap: 10px;
+        }
+
+        #question-input {
+            flex: 1; background: #f8f9fa; border: 1px solid #d1d5db;
+            border-radius: 10px; padding: 12px 16px; color: #1a1a1a;
+            font-size: 15px; font-family: inherit; outline: none;
+            transition: border-color 0.2s;
+        }
+
+        #question-input:focus { border-color: #16a34a; }
+        #question-input::placeholder { color: #9ca3af; }
+
+        #send-btn {
+            background: #16a34a; color: #fff; border: none;
+            border-radius: 10px; padding: 12px 20px; font-size: 14px;
+            font-weight: 600; cursor: pointer; transition: background 0.2s;
+        }
+
+        #send-btn:hover { background: #15803d; }
+        #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+        /* ── Welcome / examples ──────────────────────────────────── */
+        .examples { max-width: 800px; margin: 40px auto; text-align: center; }
+        .examples h2 { font-size: 22px; color: #1a1a1a; margin-bottom: 8px; }
+        .examples p { color: #888; font-size: 14px; margin-bottom: 20px; }
+
+        .example-grid {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 10px; text-align: left;
+        }
+
+        .example-btn {
+            background: #fff; border: 1px solid #e0e0e0; border-radius: 10px;
+            padding: 12px 16px; color: #444; font-size: 13px; cursor: pointer;
+            transition: border-color 0.2s, background 0.2s; text-align: left;
+        }
+
+        .example-btn:hover { border-color: #16a34a; background: #f0fdf4; }
+
+        /* ── Rename dialog ───────────────────────────────────────── */
+        .modal-overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.visible { display: flex; }
+
+        .modal {
+            background: #fff;
+            border-radius: 12px;
+            padding: 24px;
+            min-width: 360px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+        }
+
+        .modal h3 {
+            font-size: 15px;
+            margin-bottom: 14px;
+            color: #333;
+        }
+
+        .modal input {
+            width: 100%; padding: 10px 12px; border: 1px solid #d1d5db;
+            border-radius: 8px; font-size: 14px; outline: none; margin-bottom: 14px;
+        }
+
+        .modal input:focus { border-color: #16a34a; }
+
+        .modal-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+        .modal-btn {
+            padding: 8px 16px; border-radius: 8px; font-size: 13px;
+            font-weight: 500; border: 1px solid #e0e0e0; cursor: pointer;
+            background: #fff; color: #555; transition: all 0.15s;
+        }
+
+        .modal-btn:hover { border-color: #bbb; }
+
+        .modal-btn.primary {
+            background: #16a34a; color: #fff; border-color: #16a34a;
+        }
+
+        .modal-btn.primary:hover { background: #15803d; }
+
+        .modal-btn.danger {
+            background: #fff; color: #dc2626; border-color: #fca5a5;
+        }
+
+        .modal-btn.danger:hover { background: #fef2f2; }
+
+        /* ── Undo toast ──────────────────────────────────────────── */
+        #undo-toast {
+            display: none;
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-size: 13px;
+            z-index: 200;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+        }
+
+        #undo-toast.visible { display: flex; align-items: center; gap: 12px; }
+
+        #undo-toast button {
+            background: none; border: none; color: #4ade80;
+            font-weight: 600; cursor: pointer; font-size: 13px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            #sidebar {
+                position: fixed;
+                left: 0; top: 0;
+                height: 100vh;
+                box-shadow: 4px 0 20px rgba(0,0,0,0.15);
+            }
+            #sidebar.collapsed { margin-left: -280px; box-shadow: none; }
+            .chart-container { width: 100% !important; }
+        }
+
+        /* ── Scorecard (ESPN CricInfo light style) ────────── */
+        .scorecard {
+            margin-top: 14px;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+            border: 1px solid #d1d9e0;
+            background: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+
+        /* Match banner – light header */
+        .sc-banner {
+            background: #fff;
+            color: #1a1a2e;
+            padding: 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .sc-banner-top {
+            padding: 14px 20px 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .sc-series {
+            font-size: 13px;
+            font-weight: 700;
+            color: #1a1a2e;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .sc-venue {
+            font-size: 11px;
+            color: #6b7280;
+            text-align: right;
+            line-height: 1.4;
+        }
+
+        /* Team score strip */
+        .sc-teams {
+            display: flex;
+            align-items: stretch;
+            border-top: 1px solid #e5e7eb;
+            background: #fafbfc;
+        }
+
+        .sc-team {
+            flex: 1;
+            padding: 14px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sc-team + .sc-team {
+            border-left: 1px solid #e5e7eb;
+        }
+
+        .sc-team-name {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1a1a2e;
+            flex: 1;
+        }
+
+        .sc-team-scores {
+            text-align: right;
+        }
+
+        .sc-innings-score {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1a1a2e;
+            line-height: 1.5;
+        }
+
+        .sc-innings-score .sc-inn-label {
+            font-size: 10px;
+            color: #9ca3af;
+            font-weight: 500;
+            margin-right: 4px;
+            text-transform: lowercase;
+        }
+
+        .sc-team.winner .sc-team-name { color: #047857; }
+        .sc-team.winner .sc-innings-score { color: #047857; }
+
+        /* Result bar */
+        .sc-result-bar {
+            padding: 8px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f0fdf4;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .sc-result {
+            font-size: 12px;
+            font-weight: 700;
+            color: #047857;
+        }
+
+        .sc-toss {
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        /* Innings tab navigation */
+        .sc-tabs {
+            display: flex;
+            background: #fff;
+            border-bottom: 2px solid #e5e7eb;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            overflow-x: auto;
+        }
+
+        .sc-tab {
+            padding: 10px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #6b7280;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.15s;
+            white-space: nowrap;
+            text-align: center;
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sc-tab:hover { color: #1a1a2e; background: #f9fafb; }
+
+        .sc-tab.active {
+            color: #047857;
+            border-bottom-color: #10b981;
+            background: #fff;
+        }
+
+        .sc-tab .sc-tab-score {
+            font-size: 11px;
+            font-weight: 500;
+            color: #9ca3af;
+            display: block;
+        }
+
+        .sc-tab.active .sc-tab-score { color: #10b981; font-weight: 600; }
+
+        /* Scrollable innings body */
+        .sc-body {
+            max-height: 540px;
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+
+        /* Individual innings section */
+        .sc-innings {
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .sc-inn-header {
+            background: #f9fafb;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e5e7eb;
+            border-left: 4px solid #10b981;
+        }
+
+        .sc-inn-title {
+            font-weight: 700;
+            font-size: 14px;
+            color: #1a1a2e;
+        }
+
+        .sc-inn-total {
+            font-weight: 700;
+            font-size: 18px;
+            color: #1a1a2e;
+        }
+
+        /* Section labels (BATTING / BOWLING) */
+        .sc-section-label {
+            padding: 6px 20px;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #9ca3af;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        /* Batting & bowling tables */
+        .sc-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        .sc-table thead { position: sticky; top: 0; z-index: 2; }
+
+        .sc-table th {
+            background: #f9fafb;
+            color: #6b7280;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            padding: 8px 10px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .sc-table th.num { text-align: center; width: 40px; }
+
+        .sc-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid #f3f4f6;
+            color: #374151;
+        }
+
+        .sc-table td.num {
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .sc-table tbody tr:hover td { background: #f0fdf4; }
+
+        .sc-batsman-name {
+            font-weight: 600;
+            color: #1a1a2e;
+            white-space: nowrap;
+        }
+
+        .sc-dismissal {
+            font-size: 12px;
+            color: #9ca3af;
+        }
+
+        .sc-runs {
+            font-weight: 700;
+            color: #1a1a2e;
+            text-align: center;
+        }
+
+        .sc-runs.century {
+            color: #fff;
+            background: #047857;
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
+
+        .sc-runs.fifty {
+            color: #fff;
+            background: #2563eb;
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
+
+        .sc-not-out .sc-batsman-name { color: #047857; }
+        .sc-not-out .sc-runs { color: #047857; }
+
+        .sc-extras td {
+            background: #f9fafb;
+            color: #6b7280;
+            font-size: 12px;
+            padding: 6px 10px;
+            font-style: italic;
+        }
+
+        .sc-total-row td {
+            background: #f3f4f6;
+            font-weight: 700;
+            color: #1a1a2e;
+            padding: 10px;
+            font-size: 14px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+
+        /* Fall of Wickets */
+        .sc-fow {
+            padding: 8px 20px;
+            background: #f9fafb;
+            font-size: 11px;
+            color: #6b7280;
+            border-top: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+            line-height: 1.8;
+        }
+
+        .sc-fow-label {
+            font-weight: 700;
+            color: #374151;
+            margin-right: 4px;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.4px;
+        }
+
+        .sc-fow-item { color: #6b7280; }
+        .sc-fow-item .sc-fow-score { font-weight: 600; color: #374151; }
+
+        .sc-bowler-name {
+            font-weight: 600;
+            color: #1a1a2e;
+            white-space: nowrap;
+        }
+
+        .sc-wkt { font-weight: 700; }
+
+        .sc-wkt.haul {
+            color: #fff;
+            background: #047857;
+            border-radius: 4px;
+            padding: 2px 8px;
+        }
+
+        /* Did not bat */
+        .sc-dnb {
+            padding: 8px 20px;
+            background: #f9fafb;
+            font-size: 12px;
+            color: #6b7280;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .sc-dnb-label {
+            font-weight: 700;
+            color: #374151;
+            margin-right: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<div id="sidebar">
+    <div class="sidebar-header">
+        <h2>Chats</h2>
+        <button id="new-chat-btn" onclick="createNewSession()">+ New</button>
+    </div>
+    <div class="sidebar-search">
+        <input type="text" id="search-input" placeholder="Search chats..." oninput="renderSessionList()" />
+    </div>
+    <div class="sidebar-filters">
+        <span class="filter-pill active" data-filter="active" onclick="setFilter('active')">Active</span>
+        <span class="filter-pill" data-filter="archived" onclick="setFilter('archived')">Archived</span>
+        <span class="filter-pill" data-filter="all" onclick="setFilter('all')">All</span>
+    </div>
+    <div id="session-list"></div>
+</div>
+
+<!-- ── Main ─────────────────────────────────────────────────────── -->
+<div id="main">
+    <header>
+        <button id="sidebar-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#9776;</button>
+        <h1>Cricket Statistician AI</h1>
+        <span class="badge">GPT-4.1 + DuckDB</span>
+        <span id="db-stats"></span>
+        <a href="/admin" class="header-link">Data Management</a>
+    </header>
+
+    <div id="chat-container"></div>
+
+    <div id="input-area">
+        <div id="input-wrapper">
+            <input type="text" id="question-input" placeholder="Ask a cricket question..."
+                   autofocus autocomplete="off" />
+            <button id="send-btn" onclick="sendQuestion()">Ask</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Rename modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="rename-modal">
+    <div class="modal">
+        <h3>Rename Chat</h3>
+        <input type="text" id="rename-input" placeholder="Chat name..." autocomplete="off" />
+        <div class="modal-buttons">
+            <button class="modal-btn" onclick="closeRenameModal()">Cancel</button>
+            <button class="modal-btn primary" onclick="confirmRename()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Delete confirm modal ─────────────────────────────────────── -->
+<div class="modal-overlay" id="delete-modal">
+    <div class="modal">
+        <h3>Delete Chat?</h3>
+        <p style="font-size:13px;color:#777;margin-bottom:16px;">This action can be undone for 5 seconds.</p>
+        <div class="modal-buttons">
+            <button class="modal-btn" onclick="closeDeleteModal()">Cancel</button>
+            <button class="modal-btn danger" onclick="confirmDelete()">Delete</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Undo toast ───────────────────────────────────────────────── -->
+<div id="undo-toast">
+    <span>Chat deleted</span>
+    <button onclick="undoDelete()">Undo</button>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// SESSION MANAGEMENT — localStorage
+// ═══════════════════════════════════════════════════════════════════
+
+const STORAGE_KEY = 'cricket_sessions';
+const ACTIVE_KEY = 'cricket_active_session';
+
+function loadSessions() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+    catch { return []; }
+}
+
+function saveSessions(sessions) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+}
+
+function getActiveSessionId() {
+    return localStorage.getItem(ACTIVE_KEY);
+}
+
+function setActiveSessionId(id) {
+    localStorage.setItem(ACTIVE_KEY, id);
+}
+
+function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function createNewSession() {
+    const sessions = loadSessions();
+    const session = {
+        id: generateId(),
+        title: 'New Chat',
+        messages: [],
+        archived: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    sessions.unshift(session);
+    saveSessions(sessions);
+    setActiveSessionId(session.id);
+    renderSessionList();
+    renderChat();
+    document.getElementById('question-input').focus();
+}
+
+function switchSession(id) {
+    setActiveSessionId(id);
+    renderSessionList();
+    renderChat();
+}
+
+function getActiveSession() {
+    const sessions = loadSessions();
+    const id = getActiveSessionId();
+    return sessions.find(s => s.id === id) || null;
+}
+
+function updateSession(id, updates) {
+    const sessions = loadSessions();
+    const idx = sessions.findIndex(s => s.id === id);
+    if (idx === -1) return;
+    Object.assign(sessions[idx], updates, { updatedAt: Date.now() });
+    saveSessions(sessions);
+}
+
+function addMessage(sessionId, msg) {
+    const sessions = loadSessions();
+    const session = sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    session.messages.push(msg);
+    session.updatedAt = Date.now();
+    // Auto-name from first user question
+    if (session.title === 'New Chat' && msg.role === 'user') {
+        session.title = msg.content.length > 50
+            ? msg.content.slice(0, 50) + '...'
+            : msg.content;
+    }
+    saveSessions(sessions);
+}
+
+// ── Filter / Search ──
+let currentFilter = 'active';
+
+function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-pill').forEach(p => {
+        p.classList.toggle('active', p.dataset.filter === f);
+    });
+    renderSessionList();
+}
+
+function getFilteredSessions() {
+    const sessions = loadSessions();
+    const query = document.getElementById('search-input').value.trim().toLowerCase();
+
+    return sessions.filter(s => {
+        // Filter
+        if (currentFilter === 'active' && s.archived) return false;
+        if (currentFilter === 'archived' && !s.archived) return false;
+
+        // Search
+        if (query) {
+            const titleMatch = s.title.toLowerCase().includes(query);
+            const msgMatch = s.messages.some(m =>
+                m.content && m.content.toLowerCase().includes(query)
+            );
+            if (!titleMatch && !msgMatch) return false;
+        }
+        return true;
+    });
+}
+
+// ── Rename ──
+let renameTargetId = null;
+
+function openRenameModal(id, e) {
+    e.stopPropagation();
+    renameTargetId = id;
+    const sessions = loadSessions();
+    const session = sessions.find(s => s.id === id);
+    const inp = document.getElementById('rename-input');
+    inp.value = session ? session.title : '';
+    document.getElementById('rename-modal').classList.add('visible');
+    setTimeout(() => { inp.focus(); inp.select(); }, 50);
+}
+
+function closeRenameModal() {
+    document.getElementById('rename-modal').classList.remove('visible');
+    renameTargetId = null;
+}
+
+function confirmRename() {
+    const val = document.getElementById('rename-input').value.trim();
+    if (val && renameTargetId) {
+        updateSession(renameTargetId, { title: val });
+        renderSessionList();
+    }
+    closeRenameModal();
+}
+
+// ── Delete ──
+let deleteTargetId = null;
+let deletedSession = null;
+let undoTimer = null;
+
+function openDeleteModal(id, e) {
+    e.stopPropagation();
+    deleteTargetId = id;
+    document.getElementById('delete-modal').classList.add('visible');
+}
+
+function closeDeleteModal() {
+    document.getElementById('delete-modal').classList.remove('visible');
+    deleteTargetId = null;
+}
+
+function confirmDelete() {
+    if (!deleteTargetId) return;
+    const sessions = loadSessions();
+    const idx = sessions.findIndex(s => s.id === deleteTargetId);
+    if (idx === -1) { closeDeleteModal(); return; }
+
+    deletedSession = sessions.splice(idx, 1)[0];
+    saveSessions(sessions);
+
+    // If deleted the active session, switch to another
+    if (getActiveSessionId() === deleteTargetId) {
+        const remaining = sessions.filter(s => !s.archived);
+        if (remaining.length > 0) {
+            setActiveSessionId(remaining[0].id);
+        } else {
+            createNewSession();
+        }
+    }
+
+    closeDeleteModal();
+    renderSessionList();
+    renderChat();
+
+    // Show undo toast
+    const toast = document.getElementById('undo-toast');
+    toast.classList.add('visible');
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => {
+        toast.classList.remove('visible');
+        deletedSession = null;
+    }, 5000);
+}
+
+function undoDelete() {
+    if (!deletedSession) return;
+    const sessions = loadSessions();
+    sessions.unshift(deletedSession);
+    saveSessions(sessions);
+    setActiveSessionId(deletedSession.id);
+    deletedSession = null;
+    clearTimeout(undoTimer);
+    document.getElementById('undo-toast').classList.remove('visible');
+    renderSessionList();
+    renderChat();
+}
+
+// ── Archive ──
+function toggleArchive(id, e) {
+    e.stopPropagation();
+    const sessions = loadSessions();
+    const session = sessions.find(s => s.id === id);
+    if (!session) return;
+    session.archived = !session.archived;
+    session.updatedAt = Date.now();
+    saveSessions(sessions);
+    renderSessionList();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RENDERING
+// ═══════════════════════════════════════════════════════════════════
+
+function renderSessionList() {
+    const list = document.getElementById('session-list');
+    const sessions = getFilteredSessions();
+    const activeId = getActiveSessionId();
+
+    if (sessions.length === 0) {
+        list.innerHTML = '<div class="session-empty">No chats found</div>';
+        return;
+    }
+
+    list.innerHTML = sessions.map(s => {
+        const time = formatRelativeTime(s.updatedAt);
+        const msgCount = s.messages.filter(m => m.role === 'user').length;
+        const archiveIcon = s.archived ? '&#128228;' : '&#128229;';
+        const archiveTitle = s.archived ? 'Unarchive' : 'Archive';
+        return `
+            <div class="session-item${s.id === activeId ? ' active' : ''}${s.archived ? ' archived' : ''}"
+                 onclick="switchSession('${s.id}')">
+                <div class="session-info">
+                    <div class="session-title">${escapeHtml(s.title)}</div>
+                    <div class="session-meta">${msgCount} question${msgCount !== 1 ? 's' : ''} &middot; ${time}</div>
+                </div>
+                <div class="session-actions">
+                    <button class="session-action-btn" title="Rename" onclick="openRenameModal('${s.id}', event)">&#9998;</button>
+                    <button class="session-action-btn" title="${archiveTitle}" onclick="toggleArchive('${s.id}', event)">${archiveIcon}</button>
+                    <button class="session-action-btn delete" title="Delete" onclick="openDeleteModal('${s.id}', event)">&#128465;</button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderChat() {
+    const container = document.getElementById('chat-container');
+    const session = getActiveSession();
+
+    if (!session || session.messages.length === 0) {
+        container.innerHTML = `
+            <div class="examples" id="examples">
+                <h2>Ask me anything about cricket</h2>
+                <p>Complete Test records from 1877 + ball-by-ball data for 21,000+ matches</p>
+                <div class="example-grid">
+                    <button class="example-btn" onclick="askExample(this)">Who has the most centuries in Test cricket?</button>
+                    <button class="example-btn" onclick="askExample(this)">Compare Bumrah vs Cummins in T20Is &mdash; wickets, average, economy</button>
+                    <button class="example-btn" onclick="askExample(this)">Top 10 run scorers in IPL history</button>
+                    <button class="example-btn" onclick="askExample(this)">Which team has won the most matches batting first in ODIs?</button>
+                    <button class="example-btn" onclick="askExample(this)">Best bowling figures in a single Test innings</button>
+                    <button class="example-btn" onclick="askExample(this)">How does Kohli perform in 4th innings of Tests?</button>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = '';
+    for (const msg of session.messages) {
+        if (msg.role === 'user') {
+            appendMessageDOM('user', msg.content);
+        } else if (msg.role === 'assistant') {
+            appendAssistantDOM(msg.data, !!msg.data.error);
+        }
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
+function appendMessageDOM(type, text) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = `message ${type}`;
+    const label = type === 'user' ? 'You' : 'Error';
+    div.innerHTML = `<div class="label">${label}</div><div>${escapeHtml(text)}</div>`;
+    container.appendChild(div);
+}
+
+function appendAssistantDOM(data, isError) {
+    const container = document.getElementById('chat-container');
+    const div = document.createElement('div');
+    div.className = `message assistant${isError ? ' error' : ''}`;
+
+    let html = `<div class="label">Cricket Statistician</div>`;
+
+    // Handle disambiguation response
+    const isDisambiguate = data.display_hint && data.display_hint.format === 'disambiguate' && data.candidates;
+    if (isDisambiguate) {
+        html += `<div class="answer">${escapeHtml(data.answer || 'Multiple players match your query. Which one did you mean?')}</div>`;
+        html += `<div class="disambiguate-wrap">`;
+        for (const c of data.candidates) {
+            const safeQ = escapeHtml(data.original_question || '').replace(/'/g, '&#39;');
+            const safeName = escapeHtml(c.name).replace(/'/g, '&#39;');
+            const headshotHtml = c.headshot
+                ? `<img class="player-headshot" src="${escapeHtml(c.headshot)}" alt="" onerror="this.style.display='none'">`
+                : '';
+            html += `<div class="disambiguate-card" onclick="askWithPlayer('${safeName}', '${safeQ}')">
+                ${headshotHtml}
+                <div>
+                    <div class="player-name">${escapeHtml(c.name)}</div>
+                    <div class="player-ctx">${escapeHtml(c.context || '')}</div>
+                </div>
+            </div>`;
+        }
+        html += `</div>`;
+        div.innerHTML = html;
+        container.appendChild(div);
+        return;
+    }
+
+    // Handle profile card response
+    const isProfile = data.display_hint && data.display_hint.format === 'profile' && data.profile;
+    if (isProfile) {
+        const p = data.profile;
+        html += `<div class="answer">${escapeHtml(data.answer || '')}</div>`;
+        html += `<div class="profile-card">`;
+        if (p.headshot_url) {
+            html += `<img class="profile-photo" src="${escapeHtml(p.headshot_url)}" alt="${escapeHtml(p.display_name || p.full_name || '')}" onerror="this.outerHTML='<div class=\\'profile-photo-placeholder\\'>&#9917;</div>'">`;
+        } else {
+            html += `<div class="profile-photo-placeholder">&#9917;</div>`;
+        }
+        html += `<div class="profile-details">`;
+        html += `<div class="profile-name">${escapeHtml(p.display_name || p.full_name || '')}`;
+        if (p.jersey_number) html += ` <span style="color:#94a3b8;font-size:13px">#${escapeHtml(p.jersey_number)}</span>`;
+        if (p.is_active === true) html += `<span class="profile-badge badge-active">Active</span>`;
+        else if (p.is_active === false) html += `<span class="profile-badge badge-retired">Retired</span>`;
+        html += `</div>`;
+        if (p.playing_role) html += `<div class="profile-role">${escapeHtml(p.playing_role)}</div>`;
+        html += `<div class="profile-meta">`;
+        if (p.country) html += `<span><span class="label">Country</span> ${escapeHtml(p.country)}</span>`;
+        if (p.batting_style) html += `<span><span class="label">Bat</span> ${escapeHtml(p.batting_style)}</span>`;
+        if (p.bowling_style) html += `<span><span class="label">Bowl</span> ${escapeHtml(p.bowling_style)}</span>`;
+        if (p.dob) html += `<span><span class="label">Born</span> ${escapeHtml(p.dob)}</span>`;
+        if (p.debut_year) html += `<span><span class="label">Debut</span> ${p.debut_year}</span>`;
+        html += `</div>`;
+        if (p.major_teams) html += `<div class="profile-teams"><span class="label">Teams</span> ${escapeHtml(p.major_teams)}</div>`;
+        html += `</div></div>`;
+        div.innerHTML = html;
+        container.appendChild(div);
+        return;
+    }
+
+    html += `<div class="answer">${escapeHtml(data.answer || '')}</div>`;
+
+    // Chart — only for multi-row results (single-row = stat cards, no chart needed)
+    const showChart = data.chart_config && data.columns && data.rows && data.rows.length > 1;
+    if (showChart) {
+        const chartId = 'chart-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        html += `
+            <div class="chart-wrapper">
+                <div class="chart-toolbar">
+                    <button class="chart-tool-btn" onclick="toggleChartExpand('${chartId}', this)">
+                        <span>&#10530; Expand</span>
+                    </button>
+                    <button class="chart-tool-btn" onclick="copyChart('${chartId}', this)">
+                        <span>&#128203; Copy</span><span class="check">&#10003; Copied</span>
+                    </button>
+                    <button class="chart-tool-btn" onclick="downloadChart('${chartId}')">
+                        <span>&#11015; Download</span>
+                    </button>
+                </div>
+                <div class="chart-container" id="${chartId}"></div>
+            </div>
+        `;
+    }
+
+    // Smart data display — route by display_hint / sections
+    const isScorecard = data.sections && data.sections.type === 'scorecard' && data.sections.innings && data.sections.innings.length > 0;
+    if (isScorecard) {
+        html += renderScorecard(data.sections);
+    } else if (data.columns && data.columns.length > 0 && data.rows && data.rows.length > 0) {
+        // If display_hint was scorecard but sections failed to build, don't show ugly stat cards
+        const hintFormat = data.display_hint && data.display_hint.format;
+        if (hintFormat === 'scorecard') {
+            // Scorecard failed — just show the answer text, no raw data cards
+        } else {
+            html += buildDataDisplay(data.columns, data.rows, data.display_hint);
+        }
+    }
+
+    // SQL toggle
+    if (data.sql) {
+        const sqlId = 'sql-' + Date.now();
+        html += `<div class="sql-toggle" onclick="toggleSql('${sqlId}')">&#9654; Show SQL query</div>`;
+        html += `<div class="sql-block" id="${sqlId}">${escapeHtml(data.sql)}</div>`;
+    }
+
+    if (data.error) {
+        const isRateLimit = data.error.includes('429') || data.error.toLowerCase().includes('ratelimit') || data.error.toLowerCase().includes('rate limit');
+        const errMsg = isRateLimit
+            ? 'Daily API limit reached across all models. Please try again in a few hours.'
+            : data.error;
+        html += `<div style="margin-top:10px;font-size:13px;color:#dc2626;background:#fef2f2;padding:10px 14px;border-radius:8px;border:1px solid #fca5a5;">&#9888; ${escapeHtml(errMsg)}</div>`;
+        // Retry button
+        const safeQ = escapeHtml(data.question || '').replace(/'/g, '&#39;');
+        html += `<button class="retry-btn" onclick="retryQuestion('${safeQ}')">&#8635; Try again</button>`;
+    }
+
+    // Model indicator (subtle)
+    if (data.model_used && data.model_used !== 'gpt-4.1') {
+        html += `<div class="model-tag">${escapeHtml(data.model_used)}</div>`;
+    }
+
+    div.innerHTML = html;
+    container.appendChild(div);
+
+    // Render chart after DOM insert
+    if (showChart) {
+        const chartEl = div.querySelector('.chart-container');
+        if (chartEl) {
+            setTimeout(() => renderEChart(chartEl.id, data.chart_config, data.columns, data.rows), 50);
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SMART DATA DISPLAY
+// ═══════════════════════════════════════════════════════════════════
+
+function humanizeColumn(col) {
+    // Handle Kaggle quoted column names: "Match Venue (Stadium)" → Match Venue
+    return col
+        .replace(/^"/g, '').replace(/"$/g, '')  // strip surrounding quotes
+        .replace(/\([^)]*\)/g, '')               // strip parenthetical like (Stadium)
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase())
+        .replace(/\bAvg\b/i, 'Avg')
+        .replace(/\bSr\b/i, 'SR')
+        .replace(/\bOdi\b/i, 'ODI')
+        .replace(/\bT20\b/i, 'T20')
+        .replace(/\bIpl\b/i, 'IPL')
+        .replace(/\bBbl\b/i, 'BBL')
+        .replace(/\bInnings(\d)/gi, 'Inn $1')
+        .replace(/\bTeam(\d)/gi, 'Team $1')
+        .trim();
+}
+
+function formatValue(val, col) {
+    if (val === null || val === undefined || val === '') return '—';
+    const s = String(val);
+    const n = parseFloat(s);
+    const colL = col.toLowerCase();
+
+    // Skip numeric formatting for date/year/id columns
+    const isDateOrId = colL.includes('date') || colL.includes('year') || colL.includes('season')
+        || colL.includes('_id') || colL === 'match id' || colL.includes('match_id');
+
+    // Detect numeric
+    if (!isNaN(n) && s.trim() !== '' && !isDateOrId) {
+        // Averages, rates, percentages → 2 decimal
+        if (colL.includes('average') || colL.includes('avg') || colL.includes('rate') ||
+            colL.includes('economy') || colL.includes('strike') || colL.includes('pct') ||
+            colL.includes('percent')) {
+            return n.toFixed(2);
+        }
+        // Counts, totals, wickets → comma separated (only if >= 10,000 to avoid formatting years)
+        if (Number.isInteger(n) && Math.abs(n) >= 10000) {
+            return n.toLocaleString();
+        }
+        // Float with many decimals → 2 places
+        if (!Number.isInteger(n)) {
+            return n.toFixed(2);
+        }
+        return s;
+    }
+    return s;
+}
+
+function isNumericColumn(rows, colIdx) {
+    let numCount = 0;
+    const sample = rows.slice(0, 10);
+    for (const row of sample) {
+        const v = row[colIdx];
+        if (v !== null && v !== undefined && v !== '' && !isNaN(parseFloat(String(v)))) numCount++;
+    }
+    return numCount > sample.length * 0.6;
+}
+
+// Detect if the "primary" value column (the main metric) for highlighting
+function findPrimaryValueCol(columns, rows) {
+    // Heuristic: last numeric column, or column with "runs", "wickets", "average", "total" in name
+    const priority = ['total', 'runs', 'wickets', 'centuries', 'average', 'avg', 'count', 'score'];
+    for (const keyword of priority) {
+        const idx = columns.findIndex(c => c.toLowerCase().includes(keyword));
+        if (idx >= 0 && isNumericColumn(rows, idx)) return idx;
+    }
+    // Fallback: last numeric column
+    for (let i = columns.length - 1; i >= 0; i--) {
+        if (isNumericColumn(rows, i)) return i;
+    }
+    return -1;
+}
+
+function buildDataDisplay(columns, rows, displayHint) {
+    const statType = (displayHint && displayHint.stat_type) || detectStatType(columns);
+
+    // Single row → Cricbuzz-style stat table with batting/bowling segregation
+    if (rows.length === 1) {
+        return buildSegregatedStats(columns, rows[0], statType);
+    }
+    // Multi-row → premium table (leaderboards, ranked lists)
+    return buildPremiumTable(columns, rows);
+}
+
+// ── Column classification for batting vs bowling ──────────────────
+const BATTING_KEYWORDS = [
+    'runs', 'batting_avg', 'batting_average', 'strike_rate', 'centuries', 'fifties',
+    'highest_score', 'highest', 'fours', 'sixes', 'not_out', 'balls_faced',
+    'half_cent', '100s', '50s', '4s', '6s', 'hs', 'ducks', 'batting'
+];
+const BOWLING_KEYWORDS = [
+    'wickets', 'bowling_avg', 'bowling_average', 'economy', 'bowling_sr',
+    'bowling_strike', 'overs', 'overs_bowled', 'maidens', 'runs_conceded',
+    'conceded', 'five_wicket', '5w', '4w', '10w', 'bbi', 'bbm', 'bowling',
+    'dots', 'wides', 'noballs'
+];
+const SHARED_KEYWORDS = ['matches', 'innings', 'player', 'name', 'batter', 'bowler', 'team'];
+
+function classifyColumn(col) {
+    const colL = col.toLowerCase().replace(/\s+/g, '_');
+    if (SHARED_KEYWORDS.some(k => colL.includes(k))) return 'shared';
+    if (BATTING_KEYWORDS.some(k => colL.includes(k))) return 'batting';
+    if (BOWLING_KEYWORDS.some(k => colL.includes(k))) return 'bowling';
+    // Check for common abbreviations
+    if (['sr', 'avg'].includes(colL)) return 'batting'; // ambiguous, default batting for single
+    return 'unknown';
+}
+
+function detectStatType(columns) {
+    let batCount = 0, bowlCount = 0;
+    for (const col of columns) {
+        const cls = classifyColumn(col);
+        if (cls === 'batting') batCount++;
+        if (cls === 'bowling') bowlCount++;
+    }
+    if (batCount > 0 && bowlCount > 0) return 'allround';
+    if (bowlCount > 0) return 'bowling';
+    if (batCount > 0) return 'batting';
+    return 'general';
+}
+
+function buildSegregatedStats(columns, row, statType) {
+    // Classify each column
+    const batCols = [], bowlCols = [], sharedCols = [], otherCols = [];
+    for (let i = 0; i < columns.length; i++) {
+        const cls = classifyColumn(columns[i]);
+        const entry = { idx: i, col: columns[i], val: row[i] };
+        if (cls === 'batting') batCols.push(entry);
+        else if (cls === 'bowling') bowlCols.push(entry);
+        else if (cls === 'shared') sharedCols.push(entry);
+        else otherCols.push(entry);
+    }
+
+    let html = '';
+
+    // If all columns are ambiguous/other, or only one type, show as single table
+    if (batCols.length === 0 && bowlCols.length === 0) {
+        return buildStatTable('General', 'general', columns, row, null);
+    }
+
+    // For pure batting or pure bowling queries
+    if (statType === 'batting' || (batCols.length > 0 && bowlCols.length === 0)) {
+        const allCols = [...sharedCols, ...batCols, ...otherCols];
+        return buildStatTable('Batting', 'batting', allCols.map(c => c.col), allCols.map(c => c.val), null);
+    }
+    if (statType === 'bowling' || (bowlCols.length > 0 && batCols.length === 0)) {
+        const allCols = [...sharedCols, ...bowlCols, ...otherCols];
+        return buildStatTable('Bowling', 'bowling', allCols.map(c => c.col), allCols.map(c => c.val), null);
+    }
+
+    // All-round: separate batting and bowling sections
+    const batAll = [...sharedCols, ...batCols];
+    const bowlAll = [...sharedCols, ...bowlCols];
+    html += buildStatTable('Batting', 'batting', batAll.map(c => c.col), batAll.map(c => c.val), BATTING_HIGHLIGHTS);
+    html += buildStatTable('Bowling', 'bowling', bowlAll.map(c => c.col), bowlAll.map(c => c.val), BOWLING_HIGHLIGHTS);
+
+    if (otherCols.length > 0) {
+        html += buildStatTable('Other', 'general', otherCols.map(c => c.col), otherCols.map(c => c.val), null);
+    }
+    return html;
+}
+
+const BATTING_HIGHLIGHTS = ['runs', 'batting_avg', 'batting_average', 'average', 'avg', 'centuries', '100s', 'strike_rate'];
+const BOWLING_HIGHLIGHTS = ['wickets', 'bowling_avg', 'bowling_average', 'economy', 'five_wicket', '5w'];
+
+function buildStatTable(title, cssClass, columns, values, highlightKeys) {
+    const icon = cssClass === 'batting' ? '🏏' : cssClass === 'bowling' ? '🎯' : '📊';
+    let html = `<div class="stat-section">`;
+    html += `<div class="stat-section-header ${cssClass}"><span class="section-icon">${icon}</span>${escapeHtml(title)}</div>`;
+    html += `<table class="stat-table"><thead><tr>`;
+    for (const col of columns) {
+        html += `<th>${escapeHtml(humanizeColumn(col))}</th>`;
+    }
+    html += `</tr></thead><tbody><tr>`;
+    for (let i = 0; i < columns.length; i++) {
+        const val = formatValue(values[i], columns[i]);
+        const colL = columns[i].toLowerCase().replace(/\s+/g, '_');
+        const isPrimary = highlightKeys && highlightKeys.some(k => colL.includes(k));
+        const cls = isPrimary ? ' class="primary-val"' : '';
+        html += `<td${cls}>${escapeHtml(val)}</td>`;
+    }
+    html += `</tr></tbody></table></div>`;
+    return html;
+}
+
+function buildPremiumTable(columns, rows) {
+    const primaryCol = findPrimaryValueCol(columns, rows);
+    const numericCols = new Set();
+    for (let i = 0; i < columns.length; i++) {
+        if (isNumericColumn(rows, i)) numericCols.add(i);
+    }
+
+    // Check if rows look ranked (sequential numbers or sorted by primary)
+    const hasRank = rows.length > 2;
+
+    let html = '<div class="data-table-wrapper">';
+    html += `<div class="table-header">
+        <span class="table-title">Results</span>
+        <span class="row-count">${rows.length} row${rows.length !== 1 ? 's' : ''}</span>
+    </div>`;
+    html += '<div class="scroll-area"><table>';
+
+    // Header
+    html += '<thead><tr>';
+    if (hasRank) html += '<th style="width:36px;text-align:center;">#</th>';
+    for (let i = 0; i < columns.length; i++) {
+        const align = numericCols.has(i) ? ' style="text-align:right;"' : '';
+        html += `<th${align}>${escapeHtml(humanizeColumn(columns[i]))}</th>`;
+    }
+    html += '</tr></thead>';
+
+    // Body
+    html += '<tbody>';
+    for (let r = 0; r < rows.length; r++) {
+        html += '<tr>';
+        if (hasRank) html += `<td class="rank">${r + 1}</td>`;
+        for (let c = 0; c < columns.length; c++) {
+            const val = formatValue(rows[r][c], columns[c]);
+            let cls = '';
+            if (c === primaryCol) cls = ' class="primary-val"';
+            else if (numericCols.has(c)) cls = ' class="num"';
+            html += `<td${cls}>${escapeHtml(val)}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody></table></div></div>';
+    return html;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SCORECARD RENDERER (Premium ESPN CricInfo style)
+// ═══════════════════════════════════════════════════════════════════
+
+function renderScorecard(sections) {
+    if (!sections || !sections.innings || sections.innings.length === 0) return '';
+
+    const mi = sections.match_info || {};
+    const innings = sections.innings;
+    const scId = 'sc-' + Date.now();
+
+    let html = `<div class="scorecard" id="${scId}">`;
+
+    // ── Match banner ──
+    html += '<div class="sc-banner">';
+    html += '<div class="sc-banner-top">';
+    html += `<span class="sc-series">${escapeHtml(mi.title || '')}</span>`;
+    const venue = [mi.venue, mi.country].filter(Boolean).join(', ');
+    const dates = [mi.start_date, mi.end_date].filter(Boolean);
+    const dateStr = dates.length === 2 && dates[0] !== dates[1] ? dates.join(' to ') : dates[0] || '';
+    html += `<span class="sc-venue">${escapeHtml(venue)}${dateStr ? '<br>' + escapeHtml(dateStr) : ''}</span>`;
+    html += '</div>';
+
+    // Team scores strip — aggregate innings per team
+    const teamScores = {};
+    for (const inn of innings) {
+        const team = inn.team || '';
+        if (!teamScores[team]) teamScores[team] = [];
+        const t = inn.total || {};
+        const s = t.runs !== undefined ? `${t.runs}${t.wickets != null && t.wickets < 10 ? '/' + t.wickets : ''}` : '';
+        teamScores[team].push(s);
+    }
+    const winner = (mi.result || '').split(' ')[0]; // first word is usually the winner
+
+    html += '<div class="sc-teams">';
+    for (const [team, scores] of Object.entries(teamScores)) {
+        const isWinner = team && winner && team.toLowerCase().startsWith(winner.toLowerCase());
+        html += `<div class="sc-team${isWinner ? ' winner' : ''}">`;
+        html += `<span class="sc-team-name">${escapeHtml(team)}</span>`;
+        html += '<span class="sc-team-scores">';
+        scores.forEach((s, i) => {
+            const label = scores.length > 1 ? `${i === 0 ? '1st' : '2nd'}` : '';
+            html += `<div class="sc-innings-score">${label ? '<span class="sc-inn-label">' + label + '</span>' : ''}${escapeHtml(s)}</div>`;
+        });
+        html += '</span></div>';
+    }
+    html += '</div>';
+
+    // Result bar
+    html += '<div class="sc-result-bar">';
+    html += `<span class="sc-result">${escapeHtml(mi.result || '')}</span>`;
+    html += `<span class="sc-toss">${escapeHtml(mi.toss || '')}</span>`;
+    html += '</div>';
+    html += '</div>'; // end sc-banner
+
+    // ── Innings tabs ──
+    html += `<div class="sc-tabs" id="${scId}-tabs">`;
+    for (let i = 0; i < innings.length; i++) {
+        const inn = innings[i];
+        const t = inn.total || {};
+        const totalStr = t.runs !== undefined ? `${t.runs}${t.wickets != null && t.wickets < 10 ? '/' + t.wickets : ''}` : '';
+        const shortTitle = (inn.team || 'Inn ' + (i+1)) + (innings.filter(x => x.team === inn.team).length > 1
+            ? (innings.slice(0, i).filter(x => x.team === inn.team).length === 0 ? ' 1st' : ' 2nd')
+            : '');
+        html += `<div class="sc-tab${i === 0 ? ' active' : ''}" data-idx="${i}" onclick="scrollToInnings('${scId}', ${i})">`;
+        html += escapeHtml(shortTitle);
+        html += `<span class="sc-tab-score">${escapeHtml(totalStr)}</span>`;
+        html += '</div>';
+    }
+    html += '</div>';
+
+    // ── Innings body (scrollable) ──
+    html += `<div class="sc-body" id="${scId}-body">`;
+    for (let i = 0; i < innings.length; i++) {
+        html += renderScorecardInnings(innings[i], scId, i);
+    }
+    html += '</div>';
+
+    html += '</div>'; // end scorecard
+    return html;
+}
+
+function scrollToInnings(scId, idx) {
+    // Update tabs
+    const tabs = document.querySelectorAll(`#${scId}-tabs .sc-tab`);
+    tabs.forEach((t, i) => t.classList.toggle('active', i === idx));
+
+    // Scroll body to innings
+    const target = document.getElementById(`${scId}-inn-${idx}`);
+    const body = document.getElementById(`${scId}-body`);
+    if (target && body) {
+        body.scrollTo({ top: target.offsetTop - body.offsetTop, behavior: 'smooth' });
+    }
+}
+
+function renderScorecardInnings(inn, scId, idx) {
+    const batting = inn.batting || { columns: [], rows: [] };
+    const bowling = inn.bowling || { columns: [], rows: [] };
+    const fow = inn.fow || [];
+    const total = inn.total || {};
+
+    const totalStr = total.runs !== undefined
+        ? `${total.runs}${total.wickets != null ? '/' + total.wickets : ''}`
+        : '';
+
+    let html = `<div class="sc-innings" id="${scId}-inn-${idx}">`;
+
+    // Innings header
+    html += '<div class="sc-inn-header">';
+    html += `<span class="sc-inn-title">${escapeHtml(inn.title || '')}</span>`;
+    html += `<span class="sc-inn-total">${escapeHtml(totalStr)}</span>`;
+    html += '</div>';
+
+    // BATTING
+    if (batting.rows.length > 0) {
+        html += '<div class="sc-section-label">Batting</div>';
+        html += '<table class="sc-table">';
+        html += '<thead><tr><th>Batsman</th><th style="min-width:140px;"></th><th class="num">R</th><th class="num">B</th><th class="num">4s</th><th class="num">6s</th><th class="num">SR</th></tr></thead>';
+        html += '<tbody>';
+
+        for (const row of batting.rows) {
+            const batsman = row[0] || '\u2014';
+            const runs = row[1] != null ? parseInt(row[1]) || 0 : 0;
+            const balls = row[2] != null ? parseInt(row[2]) || 0 : 0;
+            const fours = row[3] != null ? parseInt(row[3]) || 0 : 0;
+            const sixes = row[4] != null ? parseInt(row[4]) || 0 : 0;
+            const sr = row[5] != null ? parseFloat(row[5]).toFixed(1) : '\u2014';
+            const isOut = row[6];
+            const dismissalType = row[7] || '';
+            const bowlerName = row[8] || '';
+            const fielder = row[9] || '';
+
+            const dismissalText = formatDismissal(isOut, dismissalType, bowlerName, fielder);
+            let runsCls = 'sc-runs';
+            if (runs >= 100) runsCls += ' century';
+            else if (runs >= 50) runsCls += ' fifty';
+
+            const trCls = !isOut ? ' class="sc-not-out"' : '';
+
+            html += `<tr${trCls}>`;
+            html += `<td class="sc-batsman-name">${escapeHtml(String(batsman))}</td>`;
+            html += `<td class="sc-dismissal">${escapeHtml(dismissalText)}</td>`;
+            html += `<td class="${runsCls}">${runs}${!isOut ? '*' : ''}</td>`;
+            html += `<td class="num">${balls}</td>`;
+            html += `<td class="num">${fours}</td>`;
+            html += `<td class="num">${sixes}</td>`;
+            html += `<td class="num">${sr}</td>`;
+            html += '</tr>';
+        }
+
+        // Extras
+        if (total.extras != null && total.extras > 0) {
+            html += `<tr class="sc-extras"><td colspan="2">Extras</td><td class="num" colspan="5">${total.extras}</td></tr>`;
+        }
+
+        // Total
+        html += `<tr class="sc-total-row"><td colspan="2">TOTAL</td><td class="num" colspan="5">${escapeHtml(totalStr)}</td></tr>`;
+        html += '</tbody></table>';
+
+        // Did not bat
+        const dnb = inn.dnb || [];
+        if (dnb.length > 0) {
+            html += '<div class="sc-dnb"><span class="sc-dnb-label">Did not bat: </span>';
+            html += escapeHtml(dnb.join(', '));
+            html += '</div>';
+        }
+    }
+
+    // FALL OF WICKETS
+    if (fow.length > 0) {
+        html += '<div class="sc-fow">';
+        html += '<span class="sc-fow-label">Fall of Wickets: </span>';
+        const fowParts = fow.map(f => {
+            const sc = `<span class="sc-fow-score">${f.score}-${f.wicket}</span>`;
+            const info = f.player ? ` (${escapeHtml(f.player)}, ${f.over} ov)` : '';
+            return `<span class="sc-fow-item">${sc}${info}</span>`;
+        });
+        html += fowParts.join(', ');
+        html += '</div>';
+    }
+
+    // BOWLING
+    if (bowling.rows.length > 0) {
+        html += '<div class="sc-section-label">Bowling</div>';
+        html += '<table class="sc-table">';
+        html += '<thead><tr><th>Bowler</th><th class="num">O</th><th class="num">M</th><th class="num">R</th><th class="num">W</th><th class="num">Econ</th></tr></thead>';
+        html += '<tbody>';
+
+        for (const row of bowling.rows) {
+            const bowler = row[0] || '\u2014';
+            const overs = row[1] != null ? row[1] : '\u2014';
+            const maidens = row[2] != null ? row[2] : 0;
+            const runs = row[3] != null ? row[3] : 0;
+            const wickets = row[4] != null ? parseInt(row[4]) || 0 : 0;
+            const economy = row[5] != null ? parseFloat(row[5]).toFixed(1) : '\u2014';
+
+            const wCls = wickets >= 5 ? 'sc-wkt haul' : 'sc-wkt';
+
+            html += '<tr>';
+            html += `<td class="sc-bowler-name">${escapeHtml(String(bowler))}</td>`;
+            html += `<td class="num">${overs}</td>`;
+            html += `<td class="num">${maidens}</td>`;
+            html += `<td class="num">${runs}</td>`;
+            html += `<td class="num ${wCls}">${wickets}</td>`;
+            html += `<td class="num">${economy}</td>`;
+            html += '</tr>';
+        }
+
+        html += '</tbody></table>';
+    }
+
+    html += '</div>'; // end sc-innings
+    return html;
+}
+
+function formatDismissal(isOut, type, bowler, fielder) {
+    if (!isOut) return 'not out';
+    if (!type) return 'out';
+
+    const t = type.toLowerCase();
+
+    if (t === 'caught') {
+        if (fielder && bowler) {
+            if (fielder === bowler) return `c & b ${bowler}`;
+            return `c ${fielder} b ${bowler}`;
+        }
+        if (bowler) return `c ? b ${bowler}`;
+        return 'caught';
+    }
+    if (t === 'bowled') return bowler ? `b ${bowler}` : 'bowled';
+    if (t === 'lbw') return bowler ? `lbw b ${bowler}` : 'lbw';
+    if (t === 'stumped') {
+        if (fielder && bowler) return `st ${fielder} b ${bowler}`;
+        if (bowler) return `st ? b ${bowler}`;
+        return 'stumped';
+    }
+    if (t === 'run out') return fielder ? `run out (${fielder})` : 'run out';
+    if (t === 'caught and bowled') return bowler ? `c & b ${bowler}` : 'c & b';
+    if (t === 'hit wicket') return bowler ? `hit wicket b ${bowler}` : 'hit wicket';
+    if (t === 'retired hurt' || t === 'retired out') return type;
+
+    return type + (bowler ? ` b ${bowler}` : '');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ECHART RENDERING
+// ═══════════════════════════════════════════════════════════════════
+
+const CHART_COLORS = [
+    '#16a34a', '#2563eb', '#d97706', '#dc2626', '#7c3aed',
+    '#0891b2', '#be185d', '#65a30d', '#ea580c', '#6366f1'
+];
+
+function renderEChart(containerId, config, columns, rows) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+
+    const chart = echarts.init(el, null, { renderer: 'canvas' });
+    const option = buildChartOption(config, columns, rows);
+    chart.setOption(option);
+
+    // Store chart instance for export
+    el._echartInstance = chart;
+
+    // Resize on expand/collapse
+    new ResizeObserver(() => chart.resize()).observe(el);
+}
+
+function buildChartOption(config, columns, rows) {
+    const type = (config.type || 'bar').toLowerCase();
+    const title = config.title || '';
+    const xField = config.x_field || columns[0];
+    const yField = config.y_field || columns[1];
+    const xIdx = columns.indexOf(xField);
+    const yIdx = columns.indexOf(yField);
+
+    // Extract data
+    const labels = rows.map(r => r[xIdx >= 0 ? xIdx : 0]);
+    const values = rows.map(r => parseFloat(r[yIdx >= 0 ? yIdx : 1]) || 0);
+
+    // Base options
+    const base = {
+        backgroundColor: '#fff',
+        title: {
+            text: title,
+            left: 'center',
+            top: 10,
+            textStyle: { fontSize: 14, fontWeight: 600, color: '#333' }
+        },
+        tooltip: {
+            trigger: 'axis',
+            backgroundColor: '#fff',
+            borderColor: '#e0e0e0',
+            borderWidth: 1,
+            textStyle: { color: '#333', fontSize: 12 },
+            axisPointer: { type: 'shadow' }
+        },
+        grid: { left: '3%', right: '5%', bottom: '3%', top: 50, containLabel: true },
+        animation: true,
+        animationDuration: 600,
+        animationEasing: 'cubicOut',
+    };
+
+    if (type === 'horizontalbar' || type === 'horizontal_bar' || (type === 'bar' && labels.some(l => String(l).length > 12))) {
+        // Horizontal bar — best for long labels
+        return {
+            ...base,
+            tooltip: { ...base.tooltip, trigger: 'axis' },
+            xAxis: {
+                type: 'value',
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            yAxis: {
+                type: 'category',
+                data: labels.slice().reverse(),
+                axisLabel: {
+                    fontSize: labels.length > 20 ? 10 : labels.length > 10 ? 11 : 12,
+                    color: '#555',
+                    width: 120,
+                    overflow: 'truncate',
+                    ellipsis: '...'
+                },
+                axisTick: { show: false },
+                axisLine: { lineStyle: { color: '#e0e0e0' } }
+            },
+            series: [{
+                type: 'bar',
+                data: values.slice().reverse(),
+                itemStyle: {
+                    color: function(params) { return CHART_COLORS[params.dataIndex % CHART_COLORS.length]; },
+                    borderRadius: [0, 4, 4, 0]
+                },
+                barMaxWidth: 28,
+                label: {
+                    show: labels.length <= 15,
+                    position: 'right',
+                    fontSize: 11,
+                    color: '#555'
+                }
+            }]
+        };
+    }
+
+    if (type === 'bar') {
+        return {
+            ...base,
+            xAxis: {
+                type: 'category',
+                data: labels,
+                axisLabel: {
+                    fontSize: labels.length > 15 ? 10 : 11,
+                    color: '#555',
+                    rotate: labels.some(l => String(l).length > 8) ? 30 : 0,
+                    width: 80,
+                    overflow: 'truncate'
+                },
+                axisTick: { alignWithLabel: true },
+                axisLine: { lineStyle: { color: '#e0e0e0' } }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            series: [{
+                type: 'bar',
+                data: values,
+                itemStyle: {
+                    color: function(params) { return CHART_COLORS[params.dataIndex % CHART_COLORS.length]; },
+                    borderRadius: [4, 4, 0, 0]
+                },
+                barMaxWidth: 40,
+                label: {
+                    show: labels.length <= 12,
+                    position: 'top',
+                    fontSize: 11,
+                    color: '#555'
+                }
+            }]
+        };
+    }
+
+    if (type === 'line') {
+        return {
+            ...base,
+            xAxis: {
+                type: 'category',
+                data: labels,
+                axisLabel: { fontSize: 11, color: '#555', rotate: labels.length > 12 ? 30 : 0 },
+                axisLine: { lineStyle: { color: '#e0e0e0' } }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            series: [{
+                type: 'line',
+                data: values,
+                smooth: true,
+                symbol: 'circle',
+                symbolSize: 6,
+                lineStyle: { color: '#16a34a', width: 2 },
+                itemStyle: { color: '#16a34a' },
+                areaStyle: {
+                    color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                        { offset: 0, color: 'rgba(22,163,74,0.15)' },
+                        { offset: 1, color: 'rgba(22,163,74,0.01)' }
+                    ])
+                }
+            }]
+        };
+    }
+
+    if (type === 'pie' || type === 'doughnut') {
+        return {
+            ...base,
+            tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+            grid: undefined,
+            legend: {
+                bottom: 10,
+                left: 'center',
+                textStyle: { fontSize: 11, color: '#555' }
+            },
+            series: [{
+                type: 'pie',
+                radius: type === 'doughnut' ? ['40%', '65%'] : '65%',
+                center: ['50%', '48%'],
+                data: labels.map((l, i) => ({
+                    name: String(l),
+                    value: values[i],
+                    itemStyle: { color: CHART_COLORS[i % CHART_COLORS.length] }
+                })),
+                label: {
+                    fontSize: 11,
+                    color: '#555',
+                    formatter: rows.length > 8 ? '{b}' : '{b}: {c}'
+                },
+                emphasis: {
+                    itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.15)' }
+                }
+            }]
+        };
+    }
+
+    if (type === 'grouped_bar' || type === 'groupedbar') {
+        // Multiple Y columns
+        const yFields = config.y_fields || columns.slice(1);
+        return {
+            ...base,
+            tooltip: { ...base.tooltip, trigger: 'axis' },
+            legend: {
+                data: yFields,
+                bottom: 10,
+                textStyle: { fontSize: 11, color: '#555' }
+            },
+            grid: { ...base.grid, bottom: 40 },
+            xAxis: {
+                type: 'category',
+                data: labels,
+                axisLabel: {
+                    fontSize: 11, color: '#555',
+                    rotate: labels.some(l => String(l).length > 8) ? 30 : 0
+                },
+                axisLine: { lineStyle: { color: '#e0e0e0' } }
+            },
+            yAxis: {
+                type: 'value',
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            series: yFields.map((field, fi) => {
+                const fIdx = columns.indexOf(field);
+                return {
+                    name: field,
+                    type: 'bar',
+                    data: rows.map(r => parseFloat(r[fIdx >= 0 ? fIdx : fi + 1]) || 0),
+                    itemStyle: {
+                        color: CHART_COLORS[fi % CHART_COLORS.length],
+                        borderRadius: [4, 4, 0, 0]
+                    },
+                    barMaxWidth: 30
+                };
+            })
+        };
+    }
+
+    if (type === 'scatter') {
+        const yLabel = yField || columns[1];
+        return {
+            ...base,
+            tooltip: {
+                trigger: 'item',
+                formatter: function(p) { return labels[p.dataIndex] + '<br/>' + xField + ': ' + p.value[0] + '<br/>' + yLabel + ': ' + p.value[1]; }
+            },
+            xAxis: {
+                type: 'value',
+                name: xField,
+                nameLocation: 'center',
+                nameGap: 30,
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            yAxis: {
+                type: 'value',
+                name: yLabel,
+                nameLocation: 'center',
+                nameGap: 40,
+                axisLabel: { fontSize: 11, color: '#777' },
+                splitLine: { lineStyle: { color: '#f1f5f9' } }
+            },
+            series: [{
+                type: 'scatter',
+                data: rows.map(r => [parseFloat(r[xIdx]) || 0, parseFloat(r[yIdx]) || 0]),
+                symbolSize: 10,
+                itemStyle: { color: '#16a34a', opacity: 0.7 }
+            }]
+        };
+    }
+
+    // Fallback: vertical bar
+    return buildChartOption({ ...config, type: 'bar' }, columns, rows);
+}
+
+// ── Chart toolbar functions ──
+
+function toggleChartExpand(chartId, btn) {
+    const el = document.getElementById(chartId);
+    if (!el) return;
+    const expanded = el.classList.toggle('expanded');
+    btn.querySelector('span').textContent = expanded ? '\u2921 Collapse' : '\u2922 Expand';
+    if (el._echartInstance) setTimeout(() => el._echartInstance.resize(), 350);
+}
+
+function copyChart(chartId, btn) {
+    const el = document.getElementById(chartId);
+    if (!el || !el._echartInstance) return;
+
+    const url = el._echartInstance.getDataURL({
+        pixelRatio: 3,
+        backgroundColor: '#fff'
+    });
+
+    // Convert data URL to blob for clipboard
+    fetch(url).then(r => r.blob()).then(blob => {
+        const item = new ClipboardItem({ 'image/png': blob });
+        navigator.clipboard.write([item]).then(() => {
+            btn.classList.add('copied');
+            setTimeout(() => btn.classList.remove('copied'), 1500);
+        }).catch(() => {
+            // Fallback: download
+            downloadChartFromURL(url, chartId);
+        });
+    });
+}
+
+function downloadChart(chartId) {
+    const el = document.getElementById(chartId);
+    if (!el || !el._echartInstance) return;
+    const url = el._echartInstance.getDataURL({
+        pixelRatio: 3,
+        backgroundColor: '#fff'
+    });
+    downloadChartFromURL(url, chartId);
+}
+
+function downloadChartFromURL(url, name) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'cricket-chart-' + Date.now() + '.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CHAT / ASK
+// ═══════════════════════════════════════════════════════════════════
+
+const chatContainer = document.getElementById('chat-container');
+const input = document.getElementById('question-input');
+const sendBtn = document.getElementById('send-btn');
+
+input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !sendBtn.disabled) sendQuestion();
+});
+
+// Handle Enter in rename modal
+document.getElementById('rename-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirmRename();
+    if (e.key === 'Escape') closeRenameModal();
+});
+
+function askExample(btn) {
+    input.value = btn.textContent;
+    sendQuestion();
+}
+
+function retryQuestion(q) {
+    input.value = q;
+    sendQuestion();
+}
+
+function askWithPlayer(playerName, originalQ) {
+    // Replace ambiguous name in original question with the selected full name
+    input.value = originalQ + ' (player: ' + playerName + ')';
+    sendQuestion();
+}
+
+async function sendQuestion() {
+    const question = input.value.trim();
+    if (!question) return;
+
+    // Ensure there's an active session
+    let session = getActiveSession();
+    if (!session) {
+        createNewSession();
+        session = getActiveSession();
+    }
+
+    // Remove examples
+    const examples = document.getElementById('examples');
+    if (examples) examples.remove();
+
+    // Save and show user message
+    addMessage(session.id, { role: 'user', content: question });
+    appendMessageDOM('user', question);
+    renderSessionList(); // Update title if auto-named
+
+    input.value = '';
+    sendBtn.disabled = true;
+
+    // Loading indicator
+    const loadingEl = document.createElement('div');
+    loadingEl.className = 'loading';
+    loadingEl.textContent = 'Thinking';
+    chatContainer.appendChild(loadingEl);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+
+    try {
+        // Build compact history: previous question + context_summary pairs
+        const currentSession = getActiveSession();
+        const history = [];
+        if (currentSession) {
+            let lastQuestion = null;
+            for (const msg of currentSession.messages) {
+                if (msg.role === 'user') {
+                    lastQuestion = msg.content;
+                } else if (msg.role === 'assistant' && lastQuestion) {
+                    history.push({
+                        question: lastQuestion,
+                        context_summary: (msg.data && msg.data.context_summary) || '',
+                        sql: (msg.data && msg.data.sql) || ''
+                    });
+                    lastQuestion = null;
+                }
+            }
+            // Don't include the current question (it's sent separately)
+        }
+
+        const resp = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, history }),
+        });
+        const data = await resp.json();
+        loadingEl.remove();
+
+        // Save assistant message
+        addMessage(session.id, { role: 'assistant', data: data });
+        appendAssistantDOM(data, !!data.error);
+    } catch (err) {
+        loadingEl.remove();
+        appendMessageDOM('error', 'Connection error: ' + err.message);
+    }
+
+    sendBtn.disabled = false;
+    input.focus();
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// SIDEBAR TOGGLE
+// ═══════════════════════════════════════════════════════════════════
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('collapsed');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════════
+
+function toggleSql(id) {
+    const el = document.getElementById(id);
+    const toggle = el.previousElementSibling;
+    if (el.style.display === 'block') {
+        el.style.display = 'none';
+        toggle.innerHTML = '&#9654; Show SQL query';
+    } else {
+        el.style.display = 'block';
+        toggle.innerHTML = '&#9660; Hide SQL query';
+    }
+}
+
+function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+}
+
+
+
+function formatRelativeTime(ts) {
+    const diff = Date.now() - ts;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return days + 'd ago';
+    return new Date(ts).toLocaleDateString();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════
+
+// Load DB stats
+fetch('/api/stats')
+    .then(r => r.json())
+    .then(stats => {
+        const parts = [];
+        if (stats.matches) parts.push(stats.matches.toLocaleString() + ' matches');
+        if (stats.deliveries) parts.push(stats.deliveries.toLocaleString() + ' deliveries');
+        document.getElementById('db-stats').textContent = parts.join(' \u00B7 ');
+    })
+    .catch(() => {});
+
+// Initialize sessions
+(function init() {
+    const sessions = loadSessions();
+    const activeId = getActiveSessionId();
+
+    if (sessions.length === 0 || !sessions.find(s => s.id === activeId)) {
+        createNewSession();
+    } else {
+        renderSessionList();
+        renderChat();
+    }
+})();
+</script>
+</body>
+</html>

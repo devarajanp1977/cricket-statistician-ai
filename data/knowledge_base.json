@@ -1,0 +1,242 @@
+{
+  "facts": [
+    {
+      "id": 1,
+      "text": "Sachin Tendulkar played 200 Tests but only 199 for India — 1 match was for ICC World XI vs Australia (2005 Super Series). The kaggle_batting table only has his 199 India innings; the ICC World XI innings is missing from the data. When queried, show 199 matches from data but mention the 200th",
+      "category": "player_anomaly",
+      "active": true
+    },
+    {
+      "id": 2,
+      "text": "Pakistan played home Tests and ODIs in UAE (2009-2023) due to the 2009 Lahore attack on the Sri Lanka team. Treat UAE venues (Dubai, Abu Dhabi, Sharjah) as Pakistan 'home' for this period",
+      "category": "venue",
+      "active": true
+    },
+    {
+      "id": 3,
+      "text": "Afghanistan's home matches have been hosted in India (Dehradun, Greater Noida, Lucknow, Chandigarh) since they have no ICC-approved home ground",
+      "category": "venue",
+      "active": true
+    },
+    {
+      "id": 4,
+      "text": "Zimbabwe was suspended from Test cricket 2006-2011. Their Test numbering has a gap in this period",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 5,
+      "text": "Bangladesh played their first Test in 2000 vs India, but early 'home' Tests were sometimes at neutral venues",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 6,
+      "text": "South Africa was banned from international cricket 1970-1991 due to apartheid. No Tests/ODIs exist for this period",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 7,
+      "text": "Ireland and Afghanistan became Test nations in 2017. Their Test data starts from 2018",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 8,
+      "text": "The ICC World Test Championship started in 2019-2021. WTC finals are held at neutral venues (Lord's 2021, The Oval 2023)",
+      "category": "competition",
+      "active": true
+    },
+    {
+      "id": 9,
+      "text": "In T20 cricket, a Super Over is used to break ties. The match winner is the Super Over winner — the main match is NOT recorded as a tie",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 10,
+      "text": "Before 2000, there were only 2 tied Tests in history (Brisbane 1960, Madras 1986). A tie is when both teams are all out with equal scores. A draw is when time runs out",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 11,
+      "text": "The IPL (Indian Premier League) started in 2008. In Cricsheet data, use event_name = 'Indian Premier League'",
+      "category": "competition",
+      "active": true
+    },
+    {
+      "id": 12,
+      "text": "The BBL (Big Bash League) started in 2011-12. In Cricsheet data, use event_name = 'Big Bash League'",
+      "category": "competition",
+      "active": true
+    },
+    {
+      "id": 13,
+      "text": "In Cricsheet data, IT20 = men's T20 International, T20 = generic T20, ODM = men's ODI domestic. For international T20s, use match_type IN ('T20', 'IT20')",
+      "category": "data_format",
+      "active": true
+    },
+    {
+      "id": 14,
+      "text": "Cricsheet player names use initials (SR Tendulkar, V Kohli, SPD Smith). Kaggle uses full names (Sachin Tendulkar, Virat Kohli, Steven Smith). Always use player_map to cross-reference",
+      "category": "data_format",
+      "active": true
+    },
+    {
+      "id": 15,
+      "text": "Don Bradman's Test average of 99.94 is the single most famous statistic in cricket. He needed just 4 runs in his final innings to average 100 but was bowled for a duck",
+      "category": "historical",
+      "active": true
+    },
+    {
+      "id": 16,
+      "text": "Brian Lara holds the record for the highest individual Test score: 400* vs England at Antigua, 2004",
+      "category": "records",
+      "active": true
+    },
+    {
+      "id": 17,
+      "text": "Jim Laker took 19 wickets in a single Test (19/90) vs Australia at Old Trafford, 1956 — the best match bowling figures ever",
+      "category": "records",
+      "active": true
+    },
+    {
+      "id": 18,
+      "text": "A batsman's 'not out' innings should NOT count as a dismissal when calculating batting average. Average = total runs / times dismissed",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 19,
+      "text": "In Test cricket, innings 3 and 4 are the 'second innings' of each team. 4th innings is typically the final run chase and has historically lower averages due to deteriorating pitch",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 20,
+      "text": "Some players have represented multiple countries: Kepler Wessels (Australia then South Africa), Ed Joyce (England then Ireland), Eoin Morgan (Ireland then England), Luke Ronchi (Australia then New Zealand)",
+      "category": "player_anomaly",
+      "active": true
+    },
+    {
+      "id": 21,
+      "text": "West Indies is a multi-nation team representing Caribbean countries (Jamaica, Barbados, Trinidad, Guyana, etc.). Their home venues span multiple countries",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 22,
+      "text": "The Ashes is a Test series between Australia and England, held roughly every 2 years alternating between the two countries. In Cricsheet, look for series/event names containing 'Ashes'",
+      "category": "competition",
+      "active": true
+    },
+    {
+      "id": 23,
+      "text": "ODI cricket started in 1971. The first Cricket World Cup was in 1975. T20 Internationals started in 2005. The first T20 World Cup was in 2007",
+      "category": "historical",
+      "active": true
+    },
+    {
+      "id": 24,
+      "text": "In older Test matches (pre-2000), ball-by-ball data is not available in Cricsheet. Only scorecard data from Kaggle tables covers the full 1877-present range",
+      "category": "data_format",
+      "active": true
+    },
+    {
+      "id": 25,
+      "text": "Day-night Tests (with pink ball) started in 2015. They can affect batting stats due to different conditions under lights",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 26,
+      "text": "The DLS method (Duckworth-Lewis-Stern) is used to adjust targets in rain-affected limited-overs matches. outcome_method = 'D/L' or 'DLS' in the data",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 27,
+      "text": "Mankading (now called 'running out the non-striker') was made legal without warning from 2022 onwards. It appears as kind = 'run out' in wickets data",
+      "category": "rules",
+      "active": true
+    },
+    {
+      "id": 28,
+      "text": "In Cricsheet data, over_num is 0-indexed. So over_num = 0 is the first over, over_num = 19 is the 20th (last) over in T20. Powerplay = over_num 0-5, death = 15-19",
+      "category": "data_format",
+      "active": true
+    },
+    {
+      "id": 29,
+      "text": "Several countries have changed names in cricket records: Rhodesia became Zimbabwe, Ceylon became Sri Lanka, East Africa and ICC Associates teams have played in World Cups",
+      "category": "team_history",
+      "active": true
+    },
+    {
+      "id": 30,
+      "text": "When a Test match is 'abandoned' or 'no result', it doesn't count in win/loss records but may still appear in the matches table",
+      "category": "rules",
+      "active": true
+    }
+  ],
+  "pending": [
+    {
+      "id": 31,
+      "text": "Joe Root is the only active player among the top 5 all-time Test run scorers.",
+      "category": "discovered",
+      "active": false,
+      "source": "Top 5 run scorers in Test cricket"
+    },
+    {
+      "id": 32,
+      "text": "Kohli averages over 42 in the 4th innings of Tests, a strong record given the tough conditions.",
+      "category": "discovered",
+      "active": false,
+      "source": "How does Kohli perform in 4th innings of Tests?"
+    },
+    {
+      "id": 33,
+      "text": "Kohli scored centuries in both innings of his first Test as captain in this match.",
+      "category": "discovered",
+      "active": false,
+      "source": "Show me the scorecard of the match in which he scored the highest in these"
+    },
+    {
+      "id": 34,
+      "text": "Kohli has two centuries and seven fifties in the 4th innings of Tests, showing strong temperament under pressure.",
+      "category": "discovered",
+      "active": false,
+      "source": "How does Kohli perform in 4th innings of Tests?"
+    },
+    {
+      "id": 35,
+      "text": "Kohli has scored 2 centuries and 7 fifties in 37 fourth-innings Test appearances.",
+      "category": "discovered",
+      "active": false,
+      "source": "How does Kohli perform in 4th innings of Tests?"
+    },
+    {
+      "id": 36,
+      "text": "Kohli averages over 42 in the 4th innings of Tests, a strong record in tough conditions.",
+      "category": "discovered",
+      "active": false,
+      "source": "How does Kohli perform in 4th innings of Tests?"
+    },
+    {
+      "id": 37,
+      "text": "Steven Smith has never scored a Test century in the fourth innings despite 40 attempts.",
+      "category": "discovered",
+      "active": false,
+      "source": "Compare Kohli and Smith's 4th innings in tests"
+    },
+    {
+      "id": 38,
+      "text": "Virat Kohli's IPL total runs are the highest in the tournament's history.",
+      "category": "discovered",
+      "active": false,
+      "source": "Add the number of matches, avg, sr etc to the list"
+    }
+  ]
+}
