@@ -207,6 +207,20 @@ IMPORTANT NOTES:
   International: IND = 'India', AUS = 'Australia', ENG = 'England', SA = 'South Africa',
   NZ = 'New Zealand', PAK = 'Pakistan', SL = 'Sri Lanka', WI = 'West Indies', BAN = 'Bangladesh',
   ZIM = 'Zimbabwe', AFG = 'Afghanistan', IRE = 'Ireland', SCO = 'Scotland', NEP = 'Nepal'
+- IPL TEAM RENAMES — CRITICAL: Several IPL teams changed names over the years. The database has
+  BOTH old and new names. When querying ANY historical/head-to-head/all-time IPL team data, you
+  MUST match ALL name variants using IN (...) — not just the current name:
+  RCB: IN ('Royal Challengers Bengaluru', 'Royal Challengers Bangalore')
+  DC:  IN ('Delhi Capitals', 'Delhi Daredevils')
+  PBKS: IN ('Punjab Kings', 'Kings XI Punjab')
+  SRH also absorbed: 'Deccan Chargers' (predecessor franchise, 2008-2012)
+  Also existed temporarily: 'Rising Pune Supergiant', 'Rising Pune Supergiants', 'Gujarat Lions',
+    'Kochi Tuskers Kerala', 'Pune Warriors'
+  For outcome_winner checks, also use IN (...) with all variants.
+  Example — CSK vs RCB head-to-head:
+    WHERE (m.team1 = 'Chennai Super Kings' AND m.team2 IN ('Royal Challengers Bengaluru', 'Royal Challengers Bangalore'))
+       OR (m.team1 IN ('Royal Challengers Bengaluru', 'Royal Challengers Bangalore') AND m.team2 = 'Chennai Super Kings')
+  And for counting wins: CASE WHEN m.outcome_winner IN ('Royal Challengers Bengaluru', 'Royal Challengers Bangalore') THEN 1 END
 - TEAM QUERIES: When users mention a team (by name or abbreviation), filter using batting_team in
   the innings table, or team1/team2 in matches — NEVER filter on batter or bowler columns for teams.
   CRITICAL: The deliveries table has NO team column. You MUST JOIN to innings to get batting_team.
@@ -787,8 +801,59 @@ class CricketQueryEngine:
                 return candidate.rstrip(";")
         return text
 
+    # ── IPL team name normalization ──────────────────────────────────────
+    # Teams that were renamed — map current name to all historical variants.
+    _TEAM_NAME_VARIANTS: dict[str, list[str]] = {
+        "Royal Challengers Bengaluru": ["Royal Challengers Bengaluru", "Royal Challengers Bangalore"],
+        "Royal Challengers Bangalore": ["Royal Challengers Bengaluru", "Royal Challengers Bangalore"],
+        "Delhi Capitals": ["Delhi Capitals", "Delhi Daredevils"],
+        "Delhi Daredevils": ["Delhi Capitals", "Delhi Daredevils"],
+        "Punjab Kings": ["Punjab Kings", "Kings XI Punjab"],
+        "Kings XI Punjab": ["Punjab Kings", "Kings XI Punjab"],
+    }
+
+    @classmethod
+    def _normalize_team_names(cls, sql: str) -> str:
+        """Expand renamed IPL team names so SQL matches all historical variants.
+
+        Handles both ``= 'Name'`` and ``IN ('Name', ...)`` patterns.
+        """
+        processed: set[frozenset[str]] = set()
+
+        for name, variants in cls._TEAM_NAME_VARIANTS.items():
+            vkey = frozenset(variants)
+            if vkey in processed:
+                continue
+            # Only act when at least one variant is quoted in the SQL
+            if not any(f"'{v}'" in sql for v in variants):
+                continue
+            processed.add(vkey)
+
+            in_list = ", ".join(f"'{v}'" for v in variants)
+
+            # 1) ``= 'AnyVariant'``  →  ``IN ('v1', 'v2', ...)``
+            for v in variants:
+                sql = sql.replace(f"= '{v}'", f"IN ({in_list})")
+
+            # 2) Inside existing IN(...) clauses, inject missing variants
+            def _expand_in(m: _re.Match, _variants: list[str] = variants) -> str:
+                body = m.group(1)
+                present = [v for v in _variants if f"'{v}'" in body]
+                if not present:
+                    return m.group(0)
+                missing = [v for v in _variants if f"'{v}'" not in body]
+                if not missing:
+                    return m.group(0)
+                extras = ", ".join(f"'{v}'" for v in missing)
+                return f"IN ({body}, {extras})"
+
+            sql = _re.sub(r"IN\s*\(([^)]+)\)", _expand_in, sql, flags=_re.IGNORECASE)
+
+        return sql
+
     def _execute_sql(self, sql: str) -> tuple[list[str], list[tuple]]:
         """Execute SQL and return (column_names, rows)."""
+        sql = self._normalize_team_names(sql)
         con = self._get_connection()
         try:
             result = con.execute(sql)
@@ -1041,6 +1106,7 @@ Results:
         try:
             sql = self._generate_sql(augmented_question, history=history)
             sql = self._extract_sql(sql)
+            sql = self._normalize_team_names(sql)
             result["sql"] = sql
         except Exception as e:
             err_str = str(e)
@@ -1079,6 +1145,7 @@ Results:
                 )
                 # Extract SQL if the retry response contains prose mixed with SQL
                 retry_sql = self._extract_sql(retry_sql)
+                retry_sql = self._normalize_team_names(retry_sql)
                 result["sql"] = retry_sql
                 columns, rows = self._execute_sql(retry_sql)
                 result["columns"] = columns
