@@ -238,6 +238,14 @@ IMPORTANT NOTES:
 - Always use player names with ILIKE '%full_name%' for flexibility
 """
 
+# Compact prompt for SQL retry — schema only, no verbose rules / narrative instructions.
+# Keeps total token count low enough for gpt-4o-mini (8 000-token API limit).
+SQL_RETRY_PROMPT = f"""You are a DuckDB SQL expert. Fix the failed SQL query using the schema below.
+Return ONLY the corrected SQL, no explanation, no markdown fences.
+
+{DB_SCHEMA}
+"""
+
 SQL_SYSTEM_PROMPT = f"""You are a cricket statistics SQL expert. Given a natural-language question about cricket, generate a DuckDB SQL query to answer it.
 
 {DB_SCHEMA}
@@ -776,6 +784,25 @@ class CricketQueryEngine:
             sql = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
         return sql.strip()
 
+    def _retry_sql(self, question: str, failed_sql: str, error: str) -> str:
+        """Retry SQL generation with a compact prompt to stay within token limits."""
+        err_text = str(error)[:500]
+        sql_text = failed_sql[:800] + ("..." if len(failed_sql) > 800 else "")
+        messages = [
+            {"role": "system", "content": SQL_RETRY_PROMPT},
+            {"role": "user", "content": (
+                f"{question}\n\n"
+                f"Previous SQL failed with error: {err_text}\n"
+                f"Previous SQL was: {sql_text}\n"
+                f"Please fix the query."
+            )},
+        ]
+        raw = self._call_llm(messages, temperature=0.1)
+        if raw.startswith("```"):
+            lines = raw.split("\n")
+            raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        return raw.strip()
+
     @staticmethod
     def _extract_sql(text: str) -> str:
         """Extract SQL from a response that may contain prose mixed with SQL.
@@ -1138,11 +1165,9 @@ Results:
             result["rows"] = [list(r) for r in rows]
         except Exception as e:
             result["error"] = f"SQL execution failed: {e}"
-            # Try once more with error context (use augmented_question to keep schema/player context)
+            # Retry with compact prompt to stay within gpt-4o-mini token limits
             try:
-                retry_sql = self._generate_sql(
-                    f"{augmented_question}\n\nPrevious SQL failed with error: {e}\nPrevious SQL was: {sql}\nPlease fix the query. Return ONLY the corrected SQL, no explanation."
-                )
+                retry_sql = self._retry_sql(augmented_question, sql, str(e))
                 # Extract SQL if the retry response contains prose mixed with SQL
                 retry_sql = self._extract_sql(retry_sql)
                 retry_sql = self._normalize_team_names(retry_sql)
