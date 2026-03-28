@@ -6,6 +6,7 @@ executes them, and formats results via GPT-4.1 through GitHub Models API.
 
 import os
 import json
+import hashlib
 import duckdb
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -14,6 +15,7 @@ load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "data", "db", "cricket.duckdb")
+CACHE_PATH = os.path.join(BASE_DIR, "data", "db", "cache.duckdb")
 KB_PATH = os.path.join(BASE_DIR, "data", "knowledge_base.json")
 
 DEFAULT_MODEL = os.getenv("GITHUB_MODEL", "gpt-4.1")
@@ -515,6 +517,7 @@ class CricketQueryEngine:
             api_key=GITHUB_TOKEN,
         )
         self._last_model_used: str | None = None
+        self._init_cache()
 
     def _call_llm(self, messages: list[dict], temperature: float = 0.1) -> str:
         """Call LLM walking the model chain, skipping rate-limited models."""
@@ -551,6 +554,143 @@ class CricketQueryEngine:
 
     def _get_connection(self) -> duckdb.DuckDBPyConnection:
         return duckdb.connect(self.db_path, read_only=True)
+
+    # ── Query cache (zero LLM calls for repeated questions) ────────────────
+
+    def _get_cache_connection(self) -> duckdb.DuckDBPyConnection:
+        """Return a writable connection to the cache database."""
+        return duckdb.connect(CACHE_PATH)
+
+    def _init_cache(self):
+        """Create the query_cache table if it doesn't exist."""
+        try:
+            con = self._get_cache_connection()
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS query_cache (
+                    question_hash TEXT PRIMARY KEY,
+                    question TEXT,
+                    sql TEXT,
+                    columns_json TEXT,
+                    rows_json TEXT,
+                    answer TEXT,
+                    chart_config_json TEXT,
+                    context_summary TEXT,
+                    display_hint_json TEXT,
+                    model_used TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    hit_count INTEGER DEFAULT 0
+                )
+            """)
+            con.close()
+        except Exception:
+            pass  # Cache is optional; don't fail startup
+
+    @staticmethod
+    def _cache_key(question: str) -> str:
+        """Generate a cache key from the normalized question."""
+        normalized = question.strip().lower()
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _cache_lookup(self, question: str) -> dict | None:
+        """Check cache for a previous answer. Returns result dict or None."""
+        try:
+            con = self._get_cache_connection()
+            key = self._cache_key(question)
+            row = con.execute("""
+                SELECT question, sql, columns_json, rows_json, answer,
+                       chart_config_json, context_summary, display_hint_json, model_used
+                FROM query_cache
+                WHERE question_hash = ?
+                  AND created_at > CURRENT_TIMESTAMP - INTERVAL 7 DAY
+            """, [key]).fetchone()
+            if row:
+                con.execute(
+                    "UPDATE query_cache SET hit_count = hit_count + 1 WHERE question_hash = ?",
+                    [key],
+                )
+                con.close()
+                return {
+                    "question": row[0],
+                    "sql": row[1],
+                    "columns": json.loads(row[2]) if row[2] else [],
+                    "rows": json.loads(row[3]) if row[3] else [],
+                    "answer": row[4] or "",
+                    "error": None,
+                    "chart_config": json.loads(row[5]) if row[5] else None,
+                    "context_summary": row[6],
+                    "new_fact": None,
+                    "display_hint": json.loads(row[7]) if row[7] else None,
+                    "sections": None,
+                    "model_used": f"{row[8]} (cached)",
+                    "cached": True,
+                }
+            con.close()
+        except Exception:
+            pass
+        return None
+
+    def _cache_store(self, question: str, result: dict):
+        """Store a successful result in the cache."""
+        if result.get("error"):
+            return
+        try:
+            con = self._get_cache_connection()
+            key = self._cache_key(question)
+            con.execute("""
+                INSERT INTO query_cache
+                    (question_hash, question, sql, columns_json, rows_json, answer,
+                     chart_config_json, context_summary, display_hint_json, model_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (question_hash) DO UPDATE SET
+                    sql = EXCLUDED.sql,
+                    columns_json = EXCLUDED.columns_json,
+                    rows_json = EXCLUDED.rows_json,
+                    answer = EXCLUDED.answer,
+                    chart_config_json = EXCLUDED.chart_config_json,
+                    context_summary = EXCLUDED.context_summary,
+                    display_hint_json = EXCLUDED.display_hint_json,
+                    model_used = EXCLUDED.model_used,
+                    created_at = NOW(),
+                    hit_count = 0
+            """, [
+                key,
+                question,
+                result.get("sql"),
+                json.dumps(result.get("columns", [])),
+                json.dumps(result.get("rows", []), default=str),
+                result.get("answer", ""),
+                json.dumps(result.get("chart_config")) if result.get("chart_config") else None,
+                result.get("context_summary"),
+                json.dumps(result.get("display_hint")) if result.get("display_hint") else None,
+                result.get("model_used"),
+            ])
+            con.close()
+        except Exception:
+            pass
+
+    def get_cache_stats(self) -> dict:
+        """Return cache statistics."""
+        try:
+            con = self._get_cache_connection()
+            total = con.execute("SELECT COUNT(*) FROM query_cache").fetchone()[0]
+            total_hits = con.execute("SELECT COALESCE(SUM(hit_count), 0) FROM query_cache").fetchone()[0]
+            recent = con.execute("""
+                SELECT COUNT(*) FROM query_cache
+                WHERE created_at > CURRENT_TIMESTAMP - INTERVAL 7 DAY
+            """).fetchone()[0]
+            con.close()
+            return {"total_entries": total, "active_entries": recent, "total_hits": total_hits}
+        except Exception:
+            return {"total_entries": 0, "active_entries": 0, "total_hits": 0}
+
+    def clear_cache(self):
+        """Delete all cache entries."""
+        try:
+            con = self._get_cache_connection()
+            con.execute("DELETE FROM query_cache")
+            con.close()
+        except Exception:
+            pass
 
     # ── Player resolution (app-layer, zero LLM calls) ─────────────────────
 
@@ -745,12 +885,68 @@ class CricketQueryEngine:
             "original_question": question,
         }
 
-    def _get_sql_prompt(self) -> str:
-        """Build the full SQL system prompt with live knowledge facts."""
+    def _get_sql_prompt(self, question: str = "") -> str:
+        """Build the full SQL system prompt with live knowledge facts and pruned schema."""
+        intent = self._detect_schema_intent(question) if question else "full"
+        if intent != "full":
+            pruned = self._prune_schema_for_intent(intent)
+            base = SQL_SYSTEM_PROMPT.replace(DB_SCHEMA, pruned)
+        else:
+            base = SQL_SYSTEM_PROMPT
         facts = _load_knowledge_facts()
         if facts:
-            return SQL_SYSTEM_PROMPT + f"\n\nCRICKET DOMAIN KNOWLEDGE (use these facts to write better queries):\n{facts}\n"
-        return SQL_SYSTEM_PROMPT
+            return base + f"\n\nCRICKET DOMAIN KNOWLEDGE (use these facts to write better queries):\n{facts}\n"
+        return base
+
+    # ── Dynamic schema pruning ─────────────────────────────────────────────
+
+    # Keywords that signal a Cricsheet-only query (IPL, T20, ODI, franchise)
+    _KW_CRICSHEET = frozenset({
+        "ipl", "odi", "t20", "t20i", "bbl", "cpl", "psl", "wpl",
+        "powerplay", "death over", "death overs",
+        "indian premier league", "world cup t20",
+        "ball by ball", "ball-by-ball",
+        "srh", "csk", "rcb", "kkr", "pbks", "lsg",
+        "chennai super kings", "mumbai indians", "kolkata knight riders",
+        "royal challengers", "sunrisers hyderabad", "rajasthan royals",
+        "delhi capitals", "punjab kings", "gujarat titans", "lucknow super giants",
+    })
+
+    # Keywords that signal a Kaggle-only query (Test cricket)
+    _KW_KAGGLE = frozenset({
+        "test match", "test matches", "test cricket", "test centuries",
+        "test average", "test batting", "test bowling",
+        "all-time test", "all time test", "test career", "test debut",
+        "test history", "test record",
+    })
+
+    @classmethod
+    def _detect_schema_intent(cls, question: str) -> str:
+        """Detect whether question needs kaggle, cricsheet, or full schema."""
+        q = question.lower()
+        has_cricsheet = any(kw in q for kw in cls._KW_CRICSHEET)
+        has_kaggle = any(kw in q for kw in cls._KW_KAGGLE)
+        if has_cricsheet and not has_kaggle:
+            return "cricsheet"
+        if has_kaggle and not has_cricsheet:
+            return "kaggle"
+        return "full"
+
+    @staticmethod
+    def _prune_schema_for_intent(intent: str) -> str:
+        """Return DB_SCHEMA with irrelevant source tables removed."""
+        if intent == "full":
+            return DB_SCHEMA
+        bar = "═" * 79
+        sections = DB_SCHEMA.split(bar)
+        if len(sections) != 7:
+            return DB_SCHEMA  # unexpected format, use full
+        # sections: [intro, src1_header, kaggle_tables, src2_header, cricsheet_tables, rules_header, rules_notes]
+        if intent == "kaggle":
+            return bar.join([sections[0], sections[1], sections[2], sections[5], sections[6]])
+        if intent == "cricsheet":
+            return bar.join([sections[0], sections[3], sections[4], sections[5], sections[6]])
+        return DB_SCHEMA
 
     def _get_narrative_prompt(self) -> str:
         """Build the full narrative system prompt with live knowledge facts."""
@@ -761,7 +957,7 @@ class CricketQueryEngine:
 
     def _generate_sql(self, question: str, history: list[dict] | None = None) -> str:
         """Ask GPT-4.1 to generate SQL for the question."""
-        messages = [{"role": "system", "content": self._get_sql_prompt()}]
+        messages = [{"role": "system", "content": self._get_sql_prompt(question)}]
         # Inject compact conversation context
         if history:
             for turn in history:
@@ -947,6 +1143,86 @@ Results:
 
         return narrative, chart_config, context_summary, new_fact, display_hint
 
+    # ── Template narrative (skip LLM for simple results) ───────────────────
+
+    @staticmethod
+    def _template_narrative(
+        question: str, sql: str, columns: list[str], rows: list
+    ) -> tuple[str, dict | None, str | None, str | None, dict | None] | None:
+        """Generate narrative without LLM for simple (0 or 1 row) results.
+
+        Returns (narrative, chart_config, context_summary, new_fact, display_hint)
+        or None if LLM should be used instead.
+        """
+        # Empty results
+        if not rows:
+            return (
+                "No matching records found in the database for this query.",
+                None,
+                f"No results for: {question[:60]}",
+                None,
+                {"format": "stats", "stat_type": "match"},
+            )
+
+        # Only template single-row results
+        if len(rows) != 1:
+            return None
+
+        # Skip template for scorecard-like queries (let LLM handle)
+        col_names_lower = {c.lower().replace(" ", "_").replace('"', "") for c in columns}
+        if "match_id" in col_names_lower:
+            return None
+
+        row = rows[0]
+        pairs = [(col, val) for col, val in zip(columns, row) if val is not None]
+        if not pairs:
+            return (
+                "The query returned a result with no data values.",
+                None, None, None,
+                {"format": "stats", "stat_type": "match"},
+            )
+
+        # Build natural prose from column-value pairs
+        parts = []
+        for col, val in pairs:
+            label = col.replace("_", " ").strip()
+            if isinstance(val, float):
+                parts.append(f"{label} is {val:g}")
+            else:
+                parts.append(f"{label} is {val}")
+
+        if len(parts) == 1:
+            narrative = f"Based on the available data, the {parts[0]}."
+        elif len(parts) == 2:
+            narrative = f"Based on the available data, the {parts[0]} and the {parts[1]}."
+        else:
+            narrative = "Based on the available data, the " + ", ".join(parts[:-1]) + f", and the {parts[-1]}."
+
+        # Detect stat_type from column names
+        if col_names_lower & {"batting_avg", "runs", "centuries", "strike_rate", "fifties", "highest_score"}:
+            stat_type = "batting"
+        elif col_names_lower & {"bowling_avg", "economy", "wickets", "overs_bowled", "bowling_sr"}:
+            stat_type = "bowling"
+        elif col_names_lower & {
+            "win_percent", "win_percentage", "wins", "losses", "win_pct",
+            "win_percent_csk", "win_percent_rcb", "matches_played",
+        }:
+            stat_type = "team"
+        else:
+            stat_type = "match"
+
+        display_hint = {"format": "stats", "stat_type": stat_type}
+
+        # Build context summary
+        summary_parts = [f"{col}={val}" for col, val in pairs[:4]]
+        context_summary = "Result: " + ", ".join(summary_parts)
+        if "kaggle" in (sql or "").lower():
+            context_summary += " (via Kaggle scorecards)"
+        else:
+            context_summary += " (via Cricsheet data)"
+
+        return narrative, None, context_summary, None, display_hint
+
     # ── Profile detection patterns ─────────────────────────────────────────
     _PROFILE_PATTERNS = [
         _re.compile(r"^(?:tell\s+me\s+about|who\s+is|who\s+was|about|profile\s+(?:of|for)?|info\s+(?:on|about))\s+(.+)", _re.IGNORECASE),
@@ -1114,6 +1390,11 @@ Results:
                         return profile_resp
                     break
 
+        # Step 0c: Check query cache (zero LLM calls for repeated questions)
+        cached = self._cache_lookup(question)
+        if cached:
+            return cached
+
         result = {
             "question": question,
             "sql": None,
@@ -1181,16 +1462,29 @@ Results:
                 result["answer"] = f"I generated a query but it failed to execute. Error: {e}"
                 return result
 
-        # Step 3: Generate narrative
+        # Step 3: Generate narrative (try template first to save LLM call)
         try:
-            data_text = self._format_results(columns, [tuple(r) for r in result["rows"]])
-            narrative, chart_config, context_summary, new_fact, display_hint = self._generate_narrative(question, result["sql"], data_text)
-            result["answer"] = narrative
-            result["chart_config"] = chart_config
-            result["context_summary"] = context_summary
-            result["new_fact"] = new_fact
-            result["display_hint"] = display_hint
-            result["model_used"] = self._last_model_used
+            template_result = self._template_narrative(
+                question, result["sql"], columns, [tuple(r) for r in result["rows"]]
+            )
+            if template_result is not None:
+                narrative, chart_config, context_summary, new_fact, display_hint = template_result
+                result["answer"] = narrative
+                result["chart_config"] = chart_config
+                result["context_summary"] = context_summary
+                result["new_fact"] = new_fact
+                result["display_hint"] = display_hint
+                result["model_used"] = "template"
+            else:
+                # Fall back to LLM narrative for complex results
+                data_text = self._format_results(columns, [tuple(r) for r in result["rows"]])
+                narrative, chart_config, context_summary, new_fact, display_hint = self._generate_narrative(question, result["sql"], data_text)
+                result["answer"] = narrative
+                result["chart_config"] = chart_config
+                result["context_summary"] = context_summary
+                result["new_fact"] = new_fact
+                result["display_hint"] = display_hint
+                result["model_used"] = self._last_model_used
 
             # Step 4: Build scorecard if display_hint says so
             is_scorecard_hint = display_hint and display_hint.get("format") == "scorecard"
@@ -1217,6 +1511,10 @@ Results:
         except Exception as e:
             # If narrative fails, just return the raw data
             result["answer"] = self._format_results(columns, [tuple(r) for r in result["rows"]])
+
+        # Step 5: Cache successful results
+        if not result.get("error"):
+            self._cache_store(question, result)
 
         return result
 

@@ -76,6 +76,7 @@ class AskResponse(BaseModel):
     display_hint: dict | None = None
     sections: dict | None = None
     model_used: str | None = None
+    cached: bool = False
     candidates: list[dict] | None = None
     original_question: str | None = None
     profile: dict | None = None
@@ -364,6 +365,21 @@ async def reject_pending(fact_id: int):
     kb = _load_kb()
     kb["pending"] = [f for f in kb["pending"] if f["id"] != fact_id]
     _save_kb(kb)
+    return {"status": "ok"}
+
+
+# ── Query Cache endpoints ───────────────────────────────────────────────────
+
+@app.get("/api/admin/cache-stats")
+async def cache_stats():
+    """Return query cache statistics."""
+    return engine.get_cache_stats()
+
+
+@app.post("/api/admin/cache-clear")
+async def cache_clear():
+    """Clear the query cache."""
+    engine.clear_cache()
     return {"status": "ok"}
 
 
