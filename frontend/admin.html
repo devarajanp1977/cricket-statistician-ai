@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Management — Cricket Statistician AI</title>
+    <script>
+        window.APP_BASE_PATH = '__APP_BASE_PATH__';
+        function withBasePath(path) {
+            const base = (window.APP_BASE_PATH || '').replace(/\/+$/, '');
+            const normalized = path.startsWith('/') ? path : `/${path}`;
+            return base ? `${base}${normalized}` : normalized;
+        }
+    </script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -226,6 +234,43 @@
         .status-dot.yellow { background: #eab308; }
         .status-dot.red { background: #ef4444; }
 
+        /* Progress bar */
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 6px;
+        }
+
+        .progress-bar .fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.4s ease;
+        }
+
+        .fill.green { background: #22c55e; }
+        .fill.yellow { background: #eab308; }
+        .fill.red { background: #ef4444; }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 16px;
+            margin-top: 8px;
+        }
+
+        .field-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            padding: 2px 0;
+        }
+
+        .field-item .fname { color: #777; }
+        .field-item .fpct { font-weight: 600; color: #1a1a1a; }
+
         /* Loading placeholder */
         .loading-text {
             color: #aaa;
@@ -356,8 +401,8 @@
         <h1>Cricket Statistician AI</h1>
         <span class="badge">Data Management</span>
         <nav>
-            <a href="/">Chat</a>
-            <a href="/admin" class="active">Data Management</a>
+            <a href="__APP_BASE_PATH__/">Chat</a>
+            <a href="__APP_BASE_PATH__/admin" class="active">Data Management</a>
         </nav>
     </header>
 
@@ -381,6 +426,13 @@
                     <h3>Player Mapping</h3>
                     <div id="player-stats"><span class="loading-text">Loading...</span></div>
                 </div>
+            </div>
+
+            <div style="margin-top: 16px;">
+                <h3 style="font-size: 13px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px;">
+                    Player Profiles — ESPN Cricinfo
+                </h3>
+                <div id="profile-stats"><span class="loading-text">Loading...</span></div>
             </div>
 
             <div style="margin-top: 16px;">
@@ -414,6 +466,14 @@
                 <button class="action-btn" onclick="runAction('backfill', this)">
                     <span class="btn-title">Run Backfill</span>
                     <span class="btn-desc">Sync missing Test matches from Cricsheet into Kaggle tables</span>
+                </button>
+                <button class="action-btn" onclick="runAction('seed-profiles', this)">
+                    <span class="btn-title">Seed Player Profiles</span>
+                    <span class="btn-desc">Fetch profiles from ESPN Cricinfo (full seed, resumes from checkpoint)</span>
+                </button>
+                <button class="action-btn" onclick="runAction('refresh-profiles', this)">
+                    <span class="btn-title">Refresh Profiles</span>
+                    <span class="btn-desc">Incremental update — new players + stale active profiles</span>
                 </button>
                 <button class="action-btn full-width" onclick="runAction('full-refresh', this)">
                     <span class="btn-title">Full Refresh Pipeline</span>
@@ -492,10 +552,11 @@
 
         // ═══════ DATA MANAGEMENT ═══════
         loadStatus();
+        loadProfileStatus();
 
         async function loadStatus() {
             try {
-                const resp = await fetch('/api/admin/status');
+                const resp = await fetch(withBasePath('/api/admin/status'));
                 const data = await resp.json();
                 renderStatus(data);
             } catch (err) {
@@ -553,6 +614,60 @@
             `).join('');
         }
 
+        async function loadProfileStatus() {
+            try {
+                const resp = await fetch(withBasePath('/api/admin/profile-status'));
+                const data = await resp.json();
+                renderProfileStatus(data);
+            } catch (err) {
+                document.getElementById('profile-stats').innerHTML =
+                    '<span style="color:#dc2626;">Failed to load profile status</span>';
+            }
+        }
+
+        function renderProfileStatus(data) {
+            const el = document.getElementById('profile-stats');
+            if (!data.exists || data.total === 0) {
+                el.innerHTML = `
+                    <div class="stat-row"><span class="stat-label">Status</span>
+                    <span class="stat-value"><span class="status-dot red"></span>Not seeded</span></div>
+                    <div class="stat-row"><span class="stat-label">Cricsheet Players</span>
+                    <span class="stat-value">${(data.cricsheet_total || 0).toLocaleString()}</span></div>
+                    <p style="font-size:12px;color:#888;margin-top:8px;">Use "Seed Player Profiles" below to start fetching from ESPN Cricinfo.</p>
+                `;
+                return;
+            }
+
+            const pct = data.coverage_pct || 0;
+            const barColor = pct >= 80 ? 'green' : pct >= 40 ? 'yellow' : 'red';
+
+            let html = `
+                <div class="stat-row"><span class="stat-label">Profiles Seeded</span>
+                <span class="stat-value">${data.total.toLocaleString()} / ${data.cricsheet_total.toLocaleString()}</span></div>
+                <div class="stat-row"><span class="stat-label">Coverage</span>
+                <span class="stat-value">${pct}%</span></div>
+                <div class="progress-bar"><div class="fill ${barColor}" style="width:${pct}%"></div></div>
+            `;
+
+            // Field completeness
+            if (data.fields) {
+                const labels = {
+                    batting_style: 'Batting Style', bowling_style: 'Bowling Style',
+                    playing_role: 'Role', country: 'Country', dob: 'DOB',
+                    debut_year: 'Debut Year', headshot_url: 'Headshot',
+                    major_teams: 'Teams', is_active: 'Active Status'
+                };
+                html += '<div class="field-grid">';
+                for (const [key, info] of Object.entries(data.fields)) {
+                    const label = labels[key] || key;
+                    html += `<div class="field-item"><span class="fname">${label}</span><span class="fpct">${info.pct}%</span></div>`;
+                }
+                html += '</div>';
+            }
+
+            el.innerHTML = html;
+        }
+
         let running = false;
 
         async function runAction(action, btn) {
@@ -571,7 +686,7 @@
             logPanel.textContent = `Starting ${action}...\n`;
 
             try {
-                const resp = await fetch(`/api/admin/${action}`, { method: 'POST' });
+                const resp = await fetch(withBasePath(`/api/admin/${action}`), { method: 'POST' });
                 const data = await resp.json();
 
                 if (data.log) {
@@ -586,6 +701,7 @@
 
                 // Refresh status
                 await loadStatus();
+                await loadProfileStatus();
             } catch (err) {
                 logPanel.textContent += `\n❌ Error: ${err.message}`;
             }
@@ -604,7 +720,7 @@
 
         async function loadKB() {
             try {
-                const resp = await fetch('/api/admin/knowledge');
+                const resp = await fetch(withBasePath('/api/admin/knowledge'));
                 kbData = await resp.json();
                 renderKB();
                 renderPending();
@@ -671,13 +787,13 @@
         }
 
         async function toggleFact(id) {
-            await fetch(`/api/admin/knowledge/${id}/toggle`, { method: 'PATCH' });
+            await fetch(withBasePath(`/api/admin/knowledge/${id}/toggle`), { method: 'PATCH' });
             await loadKB();
         }
 
         async function deleteFact(id) {
             if (!confirm('Delete this fact?')) return;
-            await fetch(`/api/admin/knowledge/${id}`, { method: 'DELETE' });
+            await fetch(withBasePath(`/api/admin/knowledge/${id}`), { method: 'DELETE' });
             await loadKB();
         }
 
@@ -709,13 +825,13 @@
             if (!text) return;
 
             if (editingId) {
-                await fetch(`/api/admin/knowledge/${editingId}`, {
+                await fetch(withBasePath(`/api/admin/knowledge/${editingId}`), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text, category })
                 });
             } else {
-                await fetch('/api/admin/knowledge', {
+                await fetch(withBasePath('/api/admin/knowledge'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ text, category })
@@ -726,12 +842,12 @@
         }
 
         async function approvePending(id) {
-            await fetch(`/api/admin/knowledge/pending/${id}/approve`, { method: 'POST' });
+            await fetch(withBasePath(`/api/admin/knowledge/pending/${id}/approve`), { method: 'POST' });
             await loadKB();
         }
 
         async function rejectPending(id) {
-            await fetch(`/api/admin/knowledge/pending/${id}/reject`, { method: 'POST' });
+            await fetch(withBasePath(`/api/admin/knowledge/pending/${id}/reject`), { method: 'POST' });
             await loadKB();
         }
 

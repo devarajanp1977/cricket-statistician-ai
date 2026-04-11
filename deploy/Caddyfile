@@ -1,0 +1,11 @@
+devarajan.in {
+    encode gzip zstd
+
+    handle_path /cricstats* {
+        reverse_proxy 127.0.0.1:8080
+    }
+
+    handle {
+        respond "Cricket Statistician AI is available at /cricstats" 200
+    }
+}

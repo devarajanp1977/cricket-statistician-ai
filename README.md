@@ -80,6 +80,65 @@ python scripts/refresh.py --force   # re-downloads + reloads everything
 python scripts/refresh.py           # incremental (only loads new matches)
 ```
 
+## Expose It On Your Own Domain
+
+If you want this app reachable on your own domain while it still runs on your laptop, the practical setup is:
+
+- GoDaddy DNS points your domain to your home public IP
+- Your router forwards ports 80 and 443 to the laptop
+- Caddy runs on the laptop for HTTPS and reverse proxying
+- Uvicorn runs locally on port 8080
+- Optional: a small GoDaddy DDNS script updates the A record if your home IP changes
+
+This repo now supports running the UI behind a URL prefix such as `/cricstats` by setting `APP_BASE_PATH=/cricstats` before starting the app.
+
+### Recommended topology
+
+- Public URL: `https://devarajan.in/cricstats`
+- Caddy on laptop: listens on `80/443`
+- FastAPI on laptop: listens on `127.0.0.1:8080`
+
+### 1. Start the app with a base path
+
+PowerShell:
+
+```powershell
+$env:APP_BASE_PATH = "/cricstats"
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+### 2. Put Caddy in front of it
+
+Use the sample config in [deploy/Caddyfile](deploy/Caddyfile).
+
+That config serves the app at `/cricstats` and terminates HTTPS automatically.
+
+### 3. Point GoDaddy DNS to your laptop's home IP
+
+If `devarajan.in` is only for this laptop-hosted app:
+
+- Create or update the `A` record for `@`
+- Point it to your current public IPv4 address
+
+If your home IP changes often, use [scripts/update_godaddy_dns.py](scripts/update_godaddy_dns.py) with a scheduled task.
+
+### 4. Configure router port forwarding
+
+Forward these TCP ports to the laptop's LAN IP:
+
+- `80 -> laptop:80`
+- `443 -> laptop:443`
+
+Reserve the laptop's LAN IP in your router if possible, so forwarding does not break after reconnects.
+
+### 5. Start Caddy
+
+Once DNS and router forwarding are correct, run Caddy with the sample config and it will request the TLS certificate automatically.
+
+### Important note
+
+Path-based hosting like `devarajan.in/cricstats` works only if your apex domain is pointing at this laptop. If `devarajan.in` is already hosted somewhere else, use a subdomain instead, such as `cricstats.devarajan.in`.
+
 ## DuckDB Tables
 
 ### From Cricsheet (ball-by-ball)

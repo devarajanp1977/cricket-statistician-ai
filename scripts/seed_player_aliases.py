@@ -102,6 +102,12 @@ def seed():
             if len(surname) > 2:
                 rows.append((surname.lower(), full_name, cs, "", "auto_surname"))
 
+        # First name (extract from canonical full name, skip initials)
+        if len(parts) > 1:
+            first = parts[0]
+            if len(first) > 2:  # skip initials like "K" or "AB"
+                rows.append((first.lower(), full_name, cs, "", "auto_first_name"))
+
     # ── 3. Also add Cricsheet-only players from deliveries ──
     # These are players who appear in deliveries but may not have a kaggle mapping
     try:

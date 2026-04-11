@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cricket Statistician AI</title>
+    <script>
+        window.APP_BASE_PATH = '__APP_BASE_PATH__';
+        function withBasePath(path) {
+            const base = (window.APP_BASE_PATH || '').replace(/\/+$/, '');
+            const normalized = path.startsWith('/') ? path : `/${path}`;
+            return base ? `${base}${normalized}` : normalized;
+        }
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -214,6 +222,14 @@
         }
 
         #db-stats { margin-left: auto; font-size: 12px; color: #888; }
+
+        #llm-status {
+            font-size: 11px; padding: 2px 8px; border-radius: 10px;
+            cursor: default; white-space: nowrap;
+        }
+        #llm-status.all-ok { background: #dcfce7; color: #166534; }
+        #llm-status.partial { background: #fef9c3; color: #854d0e; }
+        #llm-status.none-ok { background: #fee2e2; color: #991b1b; }
 
         .header-link {
             font-size: 12px; color: #888; text-decoration: none;
@@ -531,6 +547,57 @@
         }
         .profile-card .badge-active { background: #dcfce7; color: #16a34a; }
         .profile-card .badge-retired { background: #f1f5f9; color: #64748b; }
+
+        /* Profile career stats tables */
+        .profile-stats-section { margin-top: 16px; max-width: 680px; }
+        .profile-stats-section h4 {
+            font-size: 13px; font-weight: 700; color: #1a1a1a; margin: 14px 0 6px 0;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .profile-stats-table {
+            width: 100%; border-collapse: collapse; font-size: 12px;
+            border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;
+        }
+        .profile-stats-table th {
+            background: #f8fafc; color: #64748b; font-weight: 600; text-align: right;
+            padding: 6px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11px;
+            text-transform: uppercase; letter-spacing: 0.3px;
+        }
+        .profile-stats-table th:first-child { text-align: left; }
+        .profile-stats-table td {
+            padding: 7px 10px; text-align: right; border-bottom: 1px solid #f1f5f9;
+            color: #334155;
+        }
+        .profile-stats-table td:first-child { text-align: left; font-weight: 600; color: #1a1a1a; }
+        .profile-stats-table tr:last-child td { border-bottom: none; }
+        .profile-stats-table tr:hover td { background: #f8fafc; }
+        .profile-coverage-notes {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 14px;
+            max-width: 680px;
+        }
+        .profile-coverage-note {
+            font-size: 12px;
+            line-height: 1.55;
+            color: #7c2d12;
+            background: #fff7ed;
+            border: 1px solid #fed7aa;
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        .profile-format-name {
+            font-weight: 600;
+            color: #1a1a1a;
+        }
+        .profile-format-meta {
+            font-size: 11px;
+            line-height: 1.45;
+            color: #64748b;
+            font-weight: 500;
+            margin-top: 2px;
+        }
 
         .loading {
             max-width: 800px; width: 100%; margin: 0 auto;
@@ -1002,17 +1069,13 @@
         }
 
         .sc-runs.century {
-            color: #fff;
-            background: #047857;
-            border-radius: 4px;
-            padding: 2px 8px;
+            color: #047857;
+            font-weight: 700;
         }
 
         .sc-runs.fifty {
-            color: #fff;
-            background: #2563eb;
-            border-radius: 4px;
-            padding: 2px 8px;
+            color: #2563eb;
+            font-weight: 700;
         }
 
         .sc-not-out .sc-batsman-name { color: #047857; }
@@ -1115,7 +1178,8 @@
         <h1>Cricket Statistician AI</h1>
         <span class="badge">GPT-4.1 + DuckDB</span>
         <span id="db-stats"></span>
-        <a href="/admin" class="header-link">Data Management</a>
+        <span id="llm-status" title="Checking..."></span>
+        <a href="__APP_BASE_PATH__/admin" class="header-link">Data Management</a>
     </header>
 
     <div id="chat-container"></div>
@@ -1512,6 +1576,67 @@ function appendAssistantDOM(data, isError) {
         html += `</div>`;
         if (p.major_teams) html += `<div class="profile-teams"><span class="label">Teams</span> ${escapeHtml(p.major_teams)}</div>`;
         html += `</div></div>`;
+
+        // ── Career stats tables (batting & bowling by format) ──
+        const batStats = p.batting_stats || [];
+        const bowlStats = p.bowling_stats || [];
+        const coverageNotes = p.coverage_notes || [];
+        if (coverageNotes.length > 0) {
+            html += `<div class="profile-coverage-notes">`;
+            for (const note of coverageNotes) {
+                html += `<div class="profile-coverage-note">${escapeHtml(note)}</div>`;
+            }
+            html += `</div>`;
+        }
+        if (batStats.length > 0 || bowlStats.length > 0) {
+            html += `<div class="profile-stats-section">`;
+            if (batStats.length > 0) {
+                html += `<h4>Batting</h4>`;
+                html += `<table class="profile-stats-table"><thead><tr>`;
+                html += `<th>Format</th><th>Mat</th><th>Inns</th><th>NO</th><th>Runs</th><th>HS</th><th>Avg</th><th>SR</th><th>100s</th><th>50s</th>`;
+                html += `</tr></thead><tbody>`;
+                for (const s of batStats) {
+                    const formatMeta = [s.source, s.is_partial ? 'partial coverage' : ''].filter(Boolean).join(' • ');
+                    html += `<tr>`;
+                    html += `<td><div class="profile-format-name">${escapeHtml(s.format || '')}</div>${formatMeta ? `<div class="profile-format-meta">${escapeHtml(formatMeta)}</div>` : ''}</td>`;
+                    html += `<td>${s.matches ?? '-'}</td>`;
+                    html += `<td>${s.innings ?? '-'}</td>`;
+                    html += `<td>${s.not_outs ?? '-'}</td>`;
+                    html += `<td>${s.runs != null ? s.runs.toLocaleString() : '-'}</td>`;
+                    html += `<td>${s.highest_score ?? '-'}</td>`;
+                    html += `<td>${s.batting_avg != null ? s.batting_avg.toFixed(2) : '-'}</td>`;
+                    html += `<td>${s.strike_rate != null ? s.strike_rate.toFixed(2) : '-'}</td>`;
+                    html += `<td>${s.centuries ?? '-'}</td>`;
+                    html += `<td>${s.fifties ?? '-'}</td>`;
+                    html += `</tr>`;
+                }
+                html += `</tbody></table>`;
+            }
+            if (bowlStats.length > 0) {
+                html += `<h4>Bowling</h4>`;
+                html += `<table class="profile-stats-table"><thead><tr>`;
+                html += `<th>Format</th><th>Mat</th><th>Inns</th><th>Overs</th><th>Runs</th><th>Wkts</th><th>Avg</th><th>Econ</th><th>SR</th><th>Best</th>`;
+                html += `</tr></thead><tbody>`;
+                for (const s of bowlStats) {
+                    const formatMeta = [s.source, s.is_partial ? 'partial coverage' : ''].filter(Boolean).join(' • ');
+                    html += `<tr>`;
+                    html += `<td><div class="profile-format-name">${escapeHtml(s.format || '')}</div>${formatMeta ? `<div class="profile-format-meta">${escapeHtml(formatMeta)}</div>` : ''}</td>`;
+                    html += `<td>${s.matches ?? '-'}</td>`;
+                    html += `<td>${s.innings_bowled ?? '-'}</td>`;
+                    html += `<td>${s.overs ?? '-'}</td>`;
+                    html += `<td>${s.runs_conceded != null ? s.runs_conceded.toLocaleString() : '-'}</td>`;
+                    html += `<td>${s.wickets ?? '-'}</td>`;
+                    html += `<td>${s.bowling_avg != null ? s.bowling_avg.toFixed(2) : '-'}</td>`;
+                    html += `<td>${s.economy != null ? s.economy.toFixed(2) : '-'}</td>`;
+                    html += `<td>${s.bowling_sr != null ? s.bowling_sr.toFixed(2) : '-'}</td>`;
+                    html += `<td>${s.best_innings_wickets != null ? s.best_innings_wickets + 'w' : '-'}</td>`;
+                    html += `</tr>`;
+                }
+                html += `</tbody></table>`;
+            }
+            html += `</div>`;
+        }
+
         div.innerHTML = html;
         container.appendChild(div);
         return;
@@ -2485,13 +2610,16 @@ async function sendQuestion() {
             // Don't include the current question (it's sent separately)
         }
 
-        const resp = await fetch('/api/ask', {
+        const resp = await fetch(withBasePath('/api/ask'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ question, history }),
         });
         const data = await resp.json();
         loadingEl.remove();
+
+        // Refresh LLM status after each query
+        refreshLlmStatus();
 
         // Save assistant message
         addMessage(session.id, { role: 'assistant', data: data });
@@ -2554,8 +2682,53 @@ function formatRelativeTime(ts) {
 // INIT
 // ═══════════════════════════════════════════════════════════════════
 
+// Load LLM rate limit status
+function refreshLlmStatus() {
+    fetch(withBasePath('/api/rate-limits'))
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('llm-status');
+            const avail = data.available_count;
+            const total = data.total_count;
+            const calls = data.llm_calls || 0;
+            // Show LLM call count + model availability
+            if (avail === total) {
+                el.textContent = `LLM: ${calls} calls`;
+                el.className = 'all-ok';
+            } else if (avail > 0) {
+                el.textContent = `LLM: ${calls} calls (${avail}/${total} models)`;
+                el.className = 'partial';
+            } else {
+                el.textContent = `LLM: ${calls} calls (all blocked)`;
+                el.className = 'none-ok';
+            }
+            const details = data.models.map(m => {
+                let line = m.model + ': ';
+                if (!m.available) {
+                    const hrs = Math.floor(m.wait_seconds / 3600);
+                    const mins = Math.ceil((m.wait_seconds % 3600) / 60);
+                    line += `blocked (wait ${hrs}h ${mins}m)`;
+                } else if (m.remaining !== undefined) {
+                    line += `${m.remaining}/${m.limit}/min`;
+                } else {
+                    line += 'available';
+                }
+                return line;
+            }).join('\n');
+            el.title = `Total LLM calls: ${calls}\n${details}`;
+        })
+        .catch(() => {
+            const el = document.getElementById('llm-status');
+            el.textContent = 'LLM: ?';
+            el.className = '';
+            el.title = 'Could not fetch status';
+        });
+}
+refreshLlmStatus();
+setInterval(refreshLlmStatus, 60000);
+
 // Load DB stats
-fetch('/api/stats')
+fetch(withBasePath('/api/stats'))
     .then(r => r.json())
     .then(stats => {
         const parts = [];

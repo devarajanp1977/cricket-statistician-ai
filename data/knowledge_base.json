@@ -237,6 +237,48 @@
       "category": "discovered",
       "active": false,
       "source": "Add the number of matches, avg, sr etc to the list"
+    },
+    {
+      "id": 39,
+      "text": "Scorecard shows impossible wicket and run counts, suggesting a database anomaly or corruption",
+      "category": "discovered",
+      "active": false,
+      "source": "Give me the scorecard the last match they had"
+    },
+    {
+      "id": 40,
+      "text": "MS Dhoni's 47 IPL stumpings is the all-time record, far ahead of other keepers.",
+      "category": "discovered",
+      "active": false,
+      "source": "Most stumpings in IPL"
+    },
+    {
+      "id": 41,
+      "text": "Sangakkara and Dhoni are the only players with over 300 ODI catches, both as wicketkeepers.",
+      "category": "discovered",
+      "active": false,
+      "source": "Most catches in ODIs"
+    },
+    {
+      "id": 42,
+      "text": "AB de Villiers is the only non-specialist keeper among the IPL top wicketkeeper dismissals",
+      "category": "discovered",
+      "active": false,
+      "source": "Most dismissals by wicketkeepers in IPL"
+    },
+    {
+      "id": 43,
+      "text": "Brian Lara is the only player to score 400 in a single Test innings, setting the world record in 2004.",
+      "category": "discovered",
+      "active": false,
+      "source": "What is the highest individual score in Test cricket"
+    },
+    {
+      "id": 44,
+      "text": "CSK's predicted final score of 180 is based on 519 IPL data points with 25.3% resources used.",
+      "category": "discovered",
+      "active": false,
+      "source": "CSK are 55 for 1 in 6 overs in IPL. What will be their final score?"
     }
   ]
 }

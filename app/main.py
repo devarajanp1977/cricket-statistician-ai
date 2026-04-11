@@ -8,7 +8,7 @@ import re
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -16,6 +16,11 @@ from .engine import CricketQueryEngine
 
 # Knowledge base path
 KB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "knowledge_base.json")
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+APP_BASE_PATH = os.getenv("APP_BASE_PATH", "").strip()
+if APP_BASE_PATH and not APP_BASE_PATH.startswith("/"):
+    APP_BASE_PATH = "/" + APP_BASE_PATH
+APP_BASE_PATH = APP_BASE_PATH.rstrip("/")
 
 
 def _load_kb() -> dict:
@@ -30,6 +35,24 @@ def _save_kb(kb: dict):
     """Save the knowledge base JSON file."""
     with open(KB_PATH, "w", encoding="utf-8") as f:
         json.dump(kb, f, indent=2, ensure_ascii=False)
+
+
+def _render_frontend_html(filename: str) -> HTMLResponse:
+    """Serve frontend HTML with deployment-time placeholders replaced."""
+    html_path = os.path.join(FRONTEND_DIR, filename)
+    if not os.path.exists(html_path):
+        raise HTTPException(status_code=404, detail=f"{filename} not found")
+    with open(html_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("__APP_BASE_PATH__", APP_BASE_PATH)
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 # Add scripts/ to path so we can import refresh helpers
 SCRIPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "scripts")
@@ -85,10 +108,7 @@ class AskResponse(BaseModel):
 @app.get("/")
 async def root():
     """Serve the chat UI."""
-    html_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
-    if os.path.exists(html_path):
-        return FileResponse(html_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
-    return {"message": "Cricket Statistician AI — use /docs for API"}
+    return _render_frontend_html("index.html")
 
 
 @app.post("/api/ask", response_model=AskResponse)
@@ -138,15 +158,51 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/rate-limits")
+async def rate_limits():
+    """Return per-model rate limit status across all 4 models."""
+    import time
+    from .engine import DEFAULT_MODEL, FALLBACK_MODELS, _rate_limit_until, _rate_limit_remaining, _llm_call_count
+
+    now = time.time()
+    models = [DEFAULT_MODEL] + FALLBACK_MODELS
+    result = []
+    total_remaining = 0
+    total_limit = 0
+    has_header_data = False
+    for model in models:
+        blocked_until = _rate_limit_until.get(model, 0)
+        is_blocked = now < blocked_until
+        wait_secs = max(0, int(blocked_until - now)) if is_blocked else 0
+        info = {
+            "model": model,
+            "available": not is_blocked,
+            "wait_seconds": wait_secs,
+        }
+        # Include remaining call counts from headers if available
+        header_info = _rate_limit_remaining.get(model)
+        if header_info and header_info.get("remaining", -1) >= 0:
+            has_header_data = True
+            info["remaining"] = header_info["remaining"]
+            info["limit"] = header_info.get("limit", -1)
+            if not is_blocked:
+                total_remaining += header_info["remaining"]
+                total_limit += header_info.get("limit", 0)
+        result.append(info)
+    available_count = sum(1 for m in result if m["available"])
+    resp = {"models": result, "available_count": available_count, "total_count": len(models), "llm_calls": _llm_call_count}
+    if has_header_data:
+        resp["total_remaining"] = total_remaining
+        resp["total_limit"] = total_limit
+    return resp
+
+
 # ── Admin / Data Management endpoints ───────────────────────────────────────
 
 @app.get("/admin")
 async def admin_page():
     """Serve the data management UI."""
-    html_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "admin.html")
-    if os.path.exists(html_path):
-        return FileResponse(html_path)
-    raise HTTPException(status_code=404, detail="Admin page not found")
+    return _render_frontend_html("admin.html")
 
 
 @app.get("/api/admin/status")
