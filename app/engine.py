@@ -334,6 +334,8 @@ Common rules:
 4. If a [PLAYER FILTER] block is present, copy that filter exactly and do not replace it with ILIKE matching.
 5. Use HAVING or an outer query for aggregate filters; never put SUM, COUNT, AVG, MIN, or MAX directly in WHERE.
 6. Keep data source consistency with follow-up context unless the user explicitly changes scope.
+7. DuckDB relative dates use INTERVAL arithmetic, for example CURRENT_DATE - INTERVAL 1 YEAR or date_col >= CURRENT_DATE - INTERVAL 30 DAY. Never use MySQL-style DATE_ADD('year', -1, CURRENT_DATE) or DATE_SUB(CURRENT_DATE, INTERVAL 1 YEAR).
+8. If the user explicitly says all formats or across all formats, do not restrict to international matches or a single competition unless the question asks for that scope. For recent all-format player form, prefer Cricsheet because it covers recent Tests plus limited-overs cricket in one source.
 """
 
 SQL_RULES_KAGGLE_COMPACT = """
@@ -460,6 +462,8 @@ Rules:
 1. Return ONLY the SQL query, no explanation, no markdown code fences.
 2. Always limit results to 50 rows max unless the user asks for all.
 3. Use appropriate aggregations (AVG, SUM, COUNT, etc.).
+3a. DUCKDB DATE ARITHMETIC: use expressions like CURRENT_DATE - INTERVAL 1 YEAR, CURRENT_DATE - INTERVAL 30 DAY, or date_col + INTERVAL 1 MONTH. Never use MySQL-style DATE_ADD('year', -1, CURRENT_DATE), DATE_SUB('year', 1, CURRENT_DATE), or DATE_SUB(CURRENT_DATE, INTERVAL 1 YEAR).
+3b. ALL FORMATS MEANS ALL FORMATS: if the user explicitly says all formats or across all formats, do not silently restrict the query to international cricket or a single competition. For recent player form across all formats, prefer Cricsheet matches/deliveries unless the user explicitly asks for all-time Test history.
 4. CRICSHEET BATTING CALCULATIONS (deliveries table) — MANDATORY FORMULAS:
    These are EXACT formulas. Do NOT deviate. The deliveries table is ball-by-ball data.
    a) balls_faced: COUNT(*) FILTER (WHERE extras_wides = 0) — wides are NOT balls faced by the batter.
@@ -726,6 +730,8 @@ Rules:
     copy the provided WHERE clause EXACTLY into your SQL. These contain pre-resolved unique IDs.
     - kaggle_player_id: Use for kaggle_batting.batsman, kaggle_bowling."bowler id", etc.
     - cricsheet_name: Use for deliveries.batter, deliveries.bowler, wickets.player_out, etc.
+        - Any context-only lines such as team, role, or nationality are disambiguation hints only.
+            Do NOT turn them into SQL filters unless the user explicitly asks for that team or scope.
     Example [PLAYER FILTER] block:
       Kaggle filter: batsman = 10406
       Cricsheet filter: batter = 'GC Smith'
@@ -833,6 +839,7 @@ class CricketQueryEngine:
         self.model = model
         self.model_chain = [model] + FALLBACK_MODELS
         self.db_path = db_path
+        self.cache_path = CACHE_PATH
         self.client = OpenAI(
             base_url="https://models.inference.ai.azure.com",
             api_key=GITHUB_TOKEN,
@@ -1520,10 +1527,10 @@ class CricketQueryEngine:
 
     def _get_cache_connection(self) -> duckdb.DuckDBPyConnection:
         """Return a writable connection to the cache database."""
-        return duckdb.connect(CACHE_PATH)
+        return duckdb.connect(self.cache_path)
 
     def _init_cache(self):
-        """Create the query_cache table if it doesn't exist."""
+        """Create the cache tables if they don't exist."""
         try:
             con = self._get_cache_connection()
             con.execute("""
@@ -1542,21 +1549,80 @@ class CricketQueryEngine:
                     hit_count INTEGER DEFAULT 0
                 )
             """)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS cache_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            con.execute("""
+                INSERT INTO cache_meta (key, value)
+                VALUES ('data_version', '1')
+                ON CONFLICT (key) DO NOTHING
+            """)
             con.close()
         except Exception:
             pass  # Cache is optional; don't fail startup
 
     @staticmethod
-    def _cache_key(question: str) -> str:
-        """Generate a cache key from the normalized question."""
-        normalized = question.strip().lower()
-        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    def _history_signature(history: list[dict] | None = None) -> str:
+        """Generate a stable hash of the conversation history used for cache keys."""
+        normalized_history = []
+        for turn in history or []:
+            normalized_history.append({
+                "question": (turn.get("question") or "").strip(),
+                "context_summary": (turn.get("context_summary") or "").strip(),
+                "sql": (turn.get("sql") or "").strip(),
+            })
+        payload = json.dumps(
+            normalized_history,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def _cache_lookup(self, question: str) -> dict | None:
+    def _get_cache_data_version(self, con: duckdb.DuckDBPyConnection | None = None) -> int:
+        """Return the current cache data version for stale-data invalidation."""
+        owns_connection = con is None
+        try:
+            if owns_connection:
+                con = self._get_cache_connection()
+            row = con.execute(
+                "SELECT value FROM cache_meta WHERE key = 'data_version'"
+            ).fetchone()
+            version = int(row[0]) if row and row[0] is not None else 1
+            return version
+        except Exception:
+            return 1
+        finally:
+            if owns_connection and con is not None:
+                con.close()
+
+    def _cache_key(self, question: str, history: list[dict] | None = None,
+                   data_version: int | None = None) -> str:
+        """Generate a cache key from question text, history signature, and data version."""
+        normalized_question = question.strip().lower()
+        version = data_version if data_version is not None else self._get_cache_data_version()
+        payload = json.dumps(
+            {
+                "question": normalized_question,
+                "history": self._history_signature(history),
+                "data_version": int(version),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _cache_lookup(self, question: str, history: list[dict] | None = None) -> dict | None:
         """Check cache for a previous answer. Returns result dict or None."""
         try:
             con = self._get_cache_connection()
-            key = self._cache_key(question)
+            data_version = self._get_cache_data_version(con)
+            key = self._cache_key(question, history=history, data_version=data_version)
             row = con.execute("""
                 SELECT question, sql, columns_json, rows_json, answer,
                        chart_config_json, context_summary, display_hint_json, model_used
@@ -1592,13 +1658,14 @@ class CricketQueryEngine:
             pass
         return None
 
-    def _cache_store(self, question: str, result: dict):
+    def _cache_store(self, question: str, result: dict, history: list[dict] | None = None):
         """Store a successful result in the cache."""
         if result.get("error"):
             return
         try:
             con = self._get_cache_connection()
-            key = self._cache_key(question)
+            data_version = self._get_cache_data_version(con)
+            key = self._cache_key(question, history=history, data_version=data_version)
             con.execute("""
                 INSERT INTO query_cache
                     (question_hash, question, sql, columns_json, rows_json, answer,
@@ -1635,6 +1702,7 @@ class CricketQueryEngine:
         """Return cache statistics."""
         try:
             con = self._get_cache_connection()
+            data_version = self._get_cache_data_version(con)
             total = con.execute("SELECT COUNT(*) FROM query_cache").fetchone()[0]
             total_hits = con.execute("SELECT COALESCE(SUM(hit_count), 0) FROM query_cache").fetchone()[0]
             recent = con.execute("""
@@ -1642,9 +1710,14 @@ class CricketQueryEngine:
                 WHERE created_at > CURRENT_TIMESTAMP - INTERVAL 7 DAY
             """).fetchone()[0]
             con.close()
-            return {"total_entries": total, "active_entries": recent, "total_hits": total_hits}
+            return {
+                "total_entries": total,
+                "active_entries": recent,
+                "total_hits": total_hits,
+                "data_version": data_version,
+            }
         except Exception:
-            return {"total_entries": 0, "active_entries": 0, "total_hits": 0}
+            return {"total_entries": 0, "active_entries": 0, "total_hits": 0, "data_version": 1}
 
     def clear_cache(self):
         """Delete all cache entries."""
@@ -1654,6 +1727,35 @@ class CricketQueryEngine:
             con.close()
         except Exception:
             pass
+
+    def invalidate_cache(self, clear_entries: bool = True) -> dict:
+        """Bump the cache data version and optionally clear existing entries."""
+        try:
+            con = self._get_cache_connection()
+            current_version = self._get_cache_data_version(con)
+            new_version = current_version + 1
+            con.execute("""
+                INSERT INTO cache_meta (key, value, updated_at)
+                VALUES ('data_version', ?, NOW())
+                ON CONFLICT (key) DO UPDATE SET
+                    value = EXCLUDED.value,
+                    updated_at = NOW()
+            """, [str(new_version)])
+            if clear_entries:
+                con.execute("DELETE FROM query_cache")
+            con.close()
+            return {
+                "ok": True,
+                "data_version": new_version,
+                "cache_cleared": clear_entries,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "data_version": None,
+                "cache_cleared": False,
+                "error": str(exc),
+            }
 
     # ── Player resolution (app-layer, zero LLM calls) ─────────────────────
 
@@ -1673,7 +1775,7 @@ class CricketQueryEngine:
         """Resolve player names from the question using the player_aliases table.
 
         Returns list of match groups. Each group is:
-            {"query_token": str, "candidates": [{"canonical_name":..., "cricsheet_name":..., "team":..., "alias_type":...}]}
+            {"query_token": str, "candidates": [...], "confidence": "high|medium|low"}
         """
         try:
             con = self._get_connection()
@@ -1694,6 +1796,20 @@ class CricketQueryEngine:
         # Remove any empty tokens after stripping
         words = [w for w in words if w]
         candidates_by_token: dict[str, list[dict]] = {}
+        confidence_by_token: dict[str, str] = {}
+
+        def _classify_alias_match_confidence(rows: list, window_size: int, exact_match: bool) -> str:
+            if not rows:
+                return "low"
+            if not exact_match:
+                return "medium" if window_size >= 2 else "low"
+            if window_size >= 2:
+                return "high"
+            alias_types = {str(r[3] or "") for r in rows}
+            weak_single_word_aliases = {"first_name", "auto_first_name", "surname"}
+            if alias_types and alias_types.issubset(weak_single_word_aliases):
+                return "low"
+            return "high"
 
         # Try multi-word windows first (3, then 2), then single words
         matched_positions: set[int] = set()
@@ -1708,6 +1824,7 @@ class CricketQueryEngine:
                 if len(token) < 3:
                     continue
 
+                match_confidence = None
                 try:
                     rows = con.execute("""
                         SELECT DISTINCT pa.canonical_name, pa.cricsheet_name, pa.team, pa.alias_type,
@@ -1727,6 +1844,8 @@ class CricketQueryEngine:
                             pa.canonical_name
                         LIMIT 20
                     """, [token]).fetchall()
+                    if rows:
+                        match_confidence = _classify_alias_match_confidence(rows, window_size, exact_match=True)
                 except Exception:
                     rows = []
 
@@ -1755,6 +1874,8 @@ class CricketQueryEngine:
                                 pa.canonical_name
                             LIMIT 10
                         """, [like_pattern]).fetchall()
+                        if rows:
+                            match_confidence = _classify_alias_match_confidence(rows, window_size, exact_match=False)
                     except Exception:
                         rows = []
 
@@ -1773,6 +1894,7 @@ class CricketQueryEngine:
                                 "kaggle_player_id": r[4],
                             })
                     candidates_by_token[token] = unique
+                    confidence_by_token[token] = match_confidence or "high"
                     for j in range(i, i + window_size):
                         matched_positions.add(j)
 
@@ -1829,6 +1951,7 @@ class CricketQueryEngine:
                             "kaggle_player_id": r[4],
                         })
                 candidates_by_token[token] = unique
+                confidence_by_token[token] = "low"
                 matched_positions.add(i)
                 continue
 
@@ -1857,6 +1980,7 @@ class CricketQueryEngine:
                             "kaggle_player_id": r[2],
                         })
                 candidates_by_token[token] = unique
+                confidence_by_token[token] = "low"
                 matched_positions.add(i)
 
         con.close()
@@ -1865,7 +1989,11 @@ class CricketQueryEngine:
         result = []
         for token, cands in candidates_by_token.items():
             if cands:
-                result.append({"query_token": token, "candidates": cands})
+                result.append({
+                    "query_token": token,
+                    "candidates": cands,
+                    "confidence": confidence_by_token.get(token, "high"),
+                })
         return result
 
     def _build_disambiguation_response(self, question: str, token: str, candidates: list[dict]) -> dict:
@@ -2122,6 +2250,80 @@ class CricketQueryEngine:
     _CATCHES_PATTERN = _re.compile(r"\bcatch(?:es|er)?\b", _re.IGNORECASE)
     _LEADER_PATTERN = _re.compile(r"\b(?:most|max(?:imum)?|top|highest)\b", _re.IGNORECASE)
     _IPL_PATTERN = _re.compile(r"\b(?:ipl|indian premier league)\b", _re.IGNORECASE)
+    _TEAM_ENTITY_PATTERN = _re.compile(
+        r"\b(?:csk|mi|rcb|kkr|pbks|dc|gt|lsg|srh|rr|"
+        r"chennai super kings|mumbai indians|kolkata knight riders|"
+        r"royal challengers (?:bengaluru|bangalore)|sunrisers hyderabad|"
+        r"rajasthan royals|delhi capitals|delhi daredevils|punjab kings|"
+        r"kings xi punjab|gujarat titans|lucknow super giants|india|australia|"
+        r"england|pakistan|south africa|west indies|new zealand|sri lanka|"
+        r"bangladesh|afghanistan)\b",
+        _re.IGNORECASE,
+    )
+    _TEAM_WORD_PATTERN = _re.compile(r"\b(?:team|teams|side|sides)\b", _re.IGNORECASE)
+    _COMPARISON_QUERY_PATTERN = _re.compile(
+        r"\b(?:compare|comparison|compared\s+to|vs|versus|against|other\s+teams?|than)\b",
+        _re.IGNORECASE,
+    )
+    _PHASE_QUERY_PATTERN = _re.compile(
+        r"\b(?:powerplay|middle\s+overs?|death\s+overs?|first\s+\d+\s+overs?|last\s+\d+\s+overs?)\b",
+        _re.IGNORECASE,
+    )
+    _SEASON_WINDOW_PATTERN = _re.compile(
+        r"\b(?:season|seasons|last\s+\d+\s+seasons?|recent\s+seasons?)\b",
+        _re.IGNORECASE,
+    )
+    _TEAM_ABBREVIATIONS = {
+        "csk": "Chennai Super Kings",
+        "mi": "Mumbai Indians",
+        "rcb": "Royal Challengers Bengaluru",
+        "kkr": "Kolkata Knight Riders",
+        "dc": "Delhi Capitals",
+        "pbks": "Punjab Kings",
+        "rr": "Rajasthan Royals",
+        "srh": "Sunrisers Hyderabad",
+        "gt": "Gujarat Titans",
+        "lsg": "Lucknow Super Giants",
+    }
+    _TEAM_CANONICAL_NAMES = {
+        "Chennai Super Kings": "Chennai Super Kings",
+        "Mumbai Indians": "Mumbai Indians",
+        "Royal Challengers Bengaluru": "Royal Challengers Bengaluru",
+        "Royal Challengers Bangalore": "Royal Challengers Bengaluru",
+        "Kolkata Knight Riders": "Kolkata Knight Riders",
+        "Delhi Capitals": "Delhi Capitals",
+        "Delhi Daredevils": "Delhi Capitals",
+        "Punjab Kings": "Punjab Kings",
+        "Kings XI Punjab": "Punjab Kings",
+        "Rajasthan Royals": "Rajasthan Royals",
+        "Sunrisers Hyderabad": "Sunrisers Hyderabad",
+        "Gujarat Titans": "Gujarat Titans",
+        "Lucknow Super Giants": "Lucknow Super Giants",
+    }
+    _LIMITED_OVERS_BY_LABEL = {
+        "IPL": 20,
+        "BBL": 20,
+        "CPL": 20,
+        "PSL": 20,
+        "WPL": 20,
+        "T20I": 20,
+        "T20": 20,
+        "ODI": 50,
+    }
+    _PHASE_FIRST_OVERS_PATTERN = _re.compile(r"\bfirst\s+(\d+)\s+overs?\b", _re.IGNORECASE)
+    _PHASE_LAST_OVERS_PATTERN = _re.compile(r"\blast\s+(\d+)\s+overs?\b", _re.IGNORECASE)
+    _POWERPLAY_QUERY_PATTERN = _re.compile(r"\bpowerplay\b", _re.IGNORECASE)
+    _SEASON_YEAR_PATTERN = _re.compile(r"\b(?:19|20)\d{2}\b")
+    _LAST_N_SEASONS_PATTERN = _re.compile(r"\blast\s+(\d+)\s+seasons?\b", _re.IGNORECASE)
+    _RECENT_SEASONS_PATTERN = _re.compile(r"\brecent\s+seasons?\b", _re.IGNORECASE)
+    _BOWLING_PHASE_PATTERN = _re.compile(
+        r"\b(?:bowling|bowlers?|economy|economical|conced(?:e|ed|ing)|restrict(?:ed|ing)?)\b",
+        _re.IGNORECASE,
+    )
+    _BATTING_PHASE_PATTERN = _re.compile(
+        r"\b(?:batting|scoring|score|scored|run\s+rate)\b",
+        _re.IGNORECASE,
+    )
 
     @classmethod
     def _detect_match_gender(cls, question: str) -> str | None:
@@ -2136,6 +2338,22 @@ class CricketQueryEngine:
             return "female"
         return None
 
+    @classmethod
+    def _should_suppress_low_confidence_player_matches(cls, question: str) -> bool:
+        """Ignore weak player hints when the query is clearly team/comparison focused."""
+        if not question:
+            return False
+        q = question.lower()
+        has_team_entity = bool(cls._TEAM_ENTITY_PATTERN.search(question)) or bool(cls._TEAM_WORD_PATTERN.search(question))
+        has_comparison = bool(cls._COMPARISON_QUERY_PATTERN.search(question))
+        has_phase = bool(cls._PHASE_QUERY_PATTERN.search(question))
+        has_season_window = bool(cls._SEASON_WINDOW_PATTERN.search(question))
+        return (
+            "other teams" in q
+            or (has_team_entity and (has_comparison or has_phase or has_season_window))
+            or (has_comparison and has_phase)
+        )
+
     @staticmethod
     def _append_sql_condition(sql: str, condition: str) -> str:
         """Append a WHERE condition before GROUP/ORDER/HAVING/LIMIT clauses."""
@@ -2146,6 +2364,44 @@ class CricketQueryEngine:
         if _re.search(r"\bWHERE\b", head, _re.IGNORECASE):
             return f"{head} AND {condition} {tail}".rstrip()
         return f"{head} WHERE {condition} {tail}".rstrip()
+
+    @staticmethod
+    def _normalize_duckdb_date_arithmetic(sql: str) -> str:
+        """Rewrite common non-DuckDB date arithmetic into DuckDB interval syntax."""
+        if not sql:
+            return sql
+
+        def _normalize_unit(unit: str) -> str:
+            clean = unit.strip().strip("'\"").upper()
+            if clean.endswith("S") and len(clean) > 1:
+                clean = clean[:-1]
+            return clean
+
+        def _interval_expr(expr: str, amount_text: str, unit: str, op_name: str) -> str:
+            amount = int(amount_text)
+            normalized_unit = _normalize_unit(unit)
+            if amount == 0:
+                return expr.strip()
+
+            use_plus = (op_name == "ADD" and amount > 0) or (op_name == "SUB" and amount < 0)
+            operator = "+" if use_plus else "-"
+            return f"({expr.strip()} {operator} INTERVAL {abs(amount)} {normalized_unit})"
+
+        sql = _re.sub(
+            r"\bDATE_(ADD|SUB)\s*\(\s*('?\w+'?)\s*,\s*([+-]?\d+)\s*,\s*([^\)]+?)\s*\)",
+            lambda m: _interval_expr(m.group(4), m.group(3), m.group(2), m.group(1).upper()),
+            sql,
+            flags=_re.IGNORECASE,
+        )
+
+        sql = _re.sub(
+            r"\bDATE_(ADD|SUB)\s*\(\s*([^,\)]+?)\s*,\s*INTERVAL\s+([+-]?\d+)\s+(\w+)\s*\)",
+            lambda m: _interval_expr(m.group(2), m.group(3), m.group(4), m.group(1).upper()),
+            sql,
+            flags=_re.IGNORECASE,
+        )
+
+        return sql
 
     @classmethod
     def _enforce_gender_filter(cls, sql: str, question: str) -> str:
@@ -2199,6 +2455,7 @@ class CricketQueryEngine:
     @classmethod
     def _apply_question_sql_guards(cls, sql: str, question: str) -> str:
         """Apply deterministic SQL fixes inferred from the user question."""
+        sql = cls._normalize_duckdb_date_arithmetic(sql)
         sql = cls._normalize_team_names(sql)
         sql = cls._enforce_gender_filter(sql, question)
         sql = cls._fix_bowling_wicket_join(sql)
@@ -2334,6 +2591,506 @@ class CricketQueryEngine:
             "display_hint": {"format": "stats", "stat_type": "match"},
             "sections": None,
             "model_used": "deterministic-followup",
+        }
+
+    @classmethod
+    def _canonicalize_team_name(cls, team_name: str) -> str:
+        """Map historical or abbreviated team names to a single canonical label."""
+        return cls._TEAM_CANONICAL_NAMES.get(team_name, team_name)
+
+    @classmethod
+    def _extract_team_mentions(cls, text: str) -> list[str]:
+        """Extract canonical team names from free text."""
+        if not text:
+            return []
+
+        found: list[str] = []
+        text_lower = text.lower()
+
+        def _add(team_name: str) -> None:
+            canonical_name = cls._canonicalize_team_name(team_name)
+            if canonical_name and canonical_name not in found:
+                found.append(canonical_name)
+
+        for abbr, full_name in cls._TEAM_ABBREVIATIONS.items():
+            if _re.search(rf"\b{_re.escape(abbr)}\b", text_lower):
+                _add(full_name)
+
+        for team_name in sorted(cls._TEAM_CANONICAL_NAMES, key=len, reverse=True):
+            if _re.search(rf"\b{_re.escape(team_name.lower())}\b", text_lower):
+                _add(team_name)
+
+        return found
+
+    @staticmethod
+    def _format_year_list(years: list[int]) -> str:
+        """Render season years in a short natural-language form."""
+        if not years:
+            return "all seasons"
+        if len(years) == 1:
+            return str(years[0])
+        if len(years) == 2:
+            return f"{years[0]} and {years[1]}"
+        return ", ".join(str(year) for year in years[:-1]) + f", and {years[-1]}"
+
+    @staticmethod
+    def _ordinal_rank(rank: int) -> str:
+        """Return 1st/2nd/3rd style ranking labels."""
+        if 10 <= (rank % 100) <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(rank % 10, "th")
+        return f"{rank}{suffix}"
+
+    @staticmethod
+    def _possessive_label(label: str) -> str:
+        """Return a natural possessive form for team or player labels."""
+        if not label:
+            return ""
+        return f"{label}'" if label.endswith("s") else f"{label}'s"
+
+    def _resolve_team_phase_competition(self, question: str, history: list[dict] | None = None) -> dict | None:
+        """Infer limited-overs competition context from the current turn or history."""
+        candidate_texts = [question]
+        for turn in reversed(history or []):
+            candidate_texts.append(turn.get("question", ""))
+            candidate_texts.append(turn.get("context_summary", ""))
+
+        for text in candidate_texts:
+            if not text:
+                continue
+            sql_filter, label = self._detect_event_filter(text)
+            total_overs = self._LIMITED_OVERS_BY_LABEL.get(label)
+            if sql_filter and total_overs:
+                return {
+                    "sql_filter": sql_filter,
+                    "competition_label": label,
+                    "total_overs": total_overs,
+                }
+        return None
+
+    @classmethod
+    def _detect_phase_window_from_text(cls, text: str, total_overs: int | None) -> dict | None:
+        """Parse a phase window like first 10 overs, powerplay, or last 5 overs."""
+        if not text:
+            return None
+
+        first_match = cls._PHASE_FIRST_OVERS_PATTERN.search(text)
+        if first_match:
+            overs = max(1, int(first_match.group(1)))
+            if total_overs is not None:
+                overs = min(overs, total_overs)
+            return {
+                "start_over": 0,
+                "end_over": overs,
+                "phase_label": f"first {overs} overs",
+                "phase_alias": f"first_{overs}",
+            }
+
+        if cls._POWERPLAY_QUERY_PATTERN.search(text):
+            overs = min(6, total_overs) if total_overs is not None else 6
+            return {
+                "start_over": 0,
+                "end_over": overs,
+                "phase_label": "powerplay",
+                "phase_alias": "powerplay",
+            }
+
+        last_match = cls._PHASE_LAST_OVERS_PATTERN.search(text)
+        if last_match and total_overs is not None:
+            overs = max(1, int(last_match.group(1)))
+            overs = min(overs, total_overs)
+            return {
+                "start_over": max(0, total_overs - overs),
+                "end_over": total_overs,
+                "phase_label": f"last {overs} overs",
+                "phase_alias": f"last_{overs}",
+            }
+
+        return None
+
+    def _resolve_team_phase_window(self, question: str, history: list[dict] | None,
+                                   total_overs: int | None) -> dict | None:
+        """Resolve the phase window, falling back to recent history when needed."""
+        phase = self._detect_phase_window_from_text(question, total_overs)
+        if phase is not None:
+            return phase
+
+        for turn in reversed(history or []):
+            phase = self._detect_phase_window_from_text(turn.get("question", ""), total_overs)
+            if phase is not None:
+                return phase
+        return None
+
+    @classmethod
+    def _extract_explicit_years(cls, text: str) -> list[int]:
+        """Return sorted unique season years mentioned in text."""
+        if not text:
+            return []
+        return sorted({int(year) for year in cls._SEASON_YEAR_PATTERN.findall(text)})
+
+    def _resolve_recent_season_years(self, competition_sql_filter: str, season_count: int) -> list[int]:
+        """Look up the last N completed seasons for a competition from match dates."""
+        if not competition_sql_filter or season_count <= 0:
+            return []
+
+        season_count = min(max(int(season_count), 1), 5)
+        con = self._get_connection()
+        try:
+            completed_rows = con.execute(f"""
+                SELECT DISTINCT CAST(EXTRACT(YEAR FROM m.date_start) AS INT) AS season_year
+                FROM matches m
+                WHERE {competition_sql_filter}
+                  AND CAST(EXTRACT(YEAR FROM m.date_start) AS INT) < CAST(EXTRACT(YEAR FROM CURRENT_DATE) AS INT)
+                ORDER BY season_year DESC
+                LIMIT {season_count}
+            """).fetchall()
+            years = [int(row[0]) for row in completed_rows if row[0] is not None]
+            if len(years) >= season_count:
+                return sorted(years)
+
+            fallback_rows = con.execute(f"""
+                SELECT DISTINCT CAST(EXTRACT(YEAR FROM m.date_start) AS INT) AS season_year
+                FROM matches m
+                WHERE {competition_sql_filter}
+                ORDER BY season_year DESC
+                LIMIT {season_count}
+            """).fetchall()
+            return sorted(int(row[0]) for row in fallback_rows if row[0] is not None)
+        finally:
+            con.close()
+
+    def _resolve_team_phase_years(self, question: str, history: list[dict] | None,
+                                  competition_sql_filter: str) -> tuple[list[int], bool]:
+        """Resolve season years and whether the user asked for a season-by-season split."""
+        explicit_years = self._extract_explicit_years(question)
+        if explicit_years:
+            return explicit_years, len(explicit_years) > 1
+
+        season_match = self._LAST_N_SEASONS_PATTERN.search(question or "")
+        if season_match:
+            years = self._resolve_recent_season_years(competition_sql_filter, int(season_match.group(1)))
+            return years, False
+
+        if self._RECENT_SEASONS_PATTERN.search(question or ""):
+            years = self._resolve_recent_season_years(competition_sql_filter, 2)
+            return years, False
+
+        for turn in reversed(history or []):
+            previous_question = turn.get("question", "")
+            explicit_years = self._extract_explicit_years(previous_question)
+            if explicit_years:
+                return explicit_years, len(explicit_years) > 1
+
+            season_match = self._LAST_N_SEASONS_PATTERN.search(previous_question or "")
+            if season_match:
+                years = self._resolve_recent_season_years(competition_sql_filter, int(season_match.group(1)))
+                return years, False
+
+            if self._RECENT_SEASONS_PATTERN.search(previous_question or ""):
+                years = self._resolve_recent_season_years(competition_sql_filter, 2)
+                return years, False
+
+        return [], False
+
+    def _resolve_team_phase_mode(self, question: str, history: list[dict] | None = None) -> str:
+        """Determine whether the team phase question is about batting or bowling."""
+        candidate_texts = [question]
+        for turn in reversed(history or []):
+            candidate_texts.append(turn.get("question", ""))
+            candidate_texts.append(turn.get("context_summary", ""))
+
+        for text in candidate_texts:
+            if not text:
+                continue
+            if self._BOWLING_PHASE_PATTERN.search(text):
+                return "bowling"
+            if self._BATTING_PHASE_PATTERN.search(text):
+                return "batting"
+
+        return "batting"
+
+    def _resolve_team_phase_target_team(self, question: str, history: list[dict] | None = None) -> str | None:
+        """Resolve the focal team from the current turn or prior questions."""
+        teams = self._extract_team_mentions(question)
+        if teams:
+            return teams[0]
+
+        for turn in reversed(history or []):
+            teams = self._extract_team_mentions(turn.get("question", ""))
+            if teams:
+                return teams[0]
+        return None
+
+    def _resolve_league_comparison_scope(self, question: str, history: list[dict] | None = None) -> bool:
+        """Determine whether the user wants one team benchmarked against the league."""
+        if question and self._COMPARISON_QUERY_PATTERN.search(question):
+            return True
+
+        for turn in reversed(history or []):
+            previous_question = turn.get("question", "")
+            if previous_question and self._COMPARISON_QUERY_PATTERN.search(previous_question):
+                return True
+        return False
+
+    def _detect_team_phase_comparison_request(self, question: str,
+                                              history: list[dict] | None = None) -> dict | None:
+        """Recognize team phase comparison questions that are safer to answer deterministically."""
+        competition = self._resolve_team_phase_competition(question, history)
+        if not competition:
+            return None
+
+        phase_window = self._resolve_team_phase_window(question, history, competition["total_overs"])
+        if not phase_window:
+            return None
+
+        years, split_by_year = self._resolve_team_phase_years(question, history, competition["sql_filter"])
+        if not years:
+            return None
+
+        target_team = self._resolve_team_phase_target_team(question, history)
+        compare_against_league = self._resolve_league_comparison_scope(question, history)
+        has_team_signal = bool(target_team) or compare_against_league or bool(self._TEAM_WORD_PATTERN.search(question or ""))
+        if not has_team_signal:
+            return None
+
+        return {
+            **competition,
+            **phase_window,
+            "years": years,
+            "split_by_year": split_by_year,
+            "mode": self._resolve_team_phase_mode(question, history),
+            "target_team": target_team,
+            "compare_against_league": compare_against_league,
+        }
+
+    def _build_team_phase_comparison_response(self, question: str,
+                                              history: list[dict] | None = None) -> dict | None:
+        """Build deterministic team phase comparison stats from Cricsheet deliveries."""
+        request = self._detect_team_phase_comparison_request(question, history)
+        if not request:
+            return None
+
+        year_sql = ", ".join(str(year) for year in request["years"])
+        phase_condition = (
+            f"d.over_num >= {request['start_over']} "
+            f"AND d.over_num < {request['end_over']}"
+        )
+        years_text = self._format_year_list(request["years"])
+        years_title = "-".join(str(year) for year in request["years"]) if request["years"] else "all-seasons"
+        target_team_sql = (request["target_team"] or "").replace("'", "''")
+        select_season = "season_year AS season,\n    " if request["split_by_year"] else ""
+        group_season = "season_year, " if request["split_by_year"] else ""
+
+        chart_config = None
+        if request["mode"] == "bowling":
+            team_column = "bowling_team"
+            primary_metric = f"avg_runs_conceded_{request['phase_alias']}"
+            secondary_metric = f"avg_economy_{request['phase_alias']}"
+            outer_where = "WHERE bowling_team IS NOT NULL"
+            if request["target_team"] and not request["compare_against_league"]:
+                outer_where += f" AND bowling_team = '{target_team_sql}'"
+            sql = f"""
+WITH phase_innings AS (
+    SELECT
+        CAST(EXTRACT(YEAR FROM m.date_start) AS INT) AS season_year,
+        m.match_id,
+        i.innings_num,
+        CASE
+            WHEN i.batting_team = m.team1 THEN m.team2
+            WHEN i.batting_team = m.team2 THEN m.team1
+            ELSE NULL
+        END AS bowling_team,
+        SUM(d.runs_total) AS phase_runs,
+        COUNT(*) FILTER (
+            WHERE COALESCE(d.extras_wides, 0) = 0
+              AND COALESCE(d.extras_noballs, 0) = 0
+        ) AS legal_balls
+    FROM matches m
+    JOIN innings i ON m.match_id = i.match_id
+    JOIN deliveries d ON m.match_id = d.match_id AND i.innings_num = d.innings_num
+    WHERE {request['sql_filter']}
+      AND CAST(EXTRACT(YEAR FROM m.date_start) AS INT) IN ({year_sql})
+      AND {phase_condition}
+    GROUP BY 1, 2, 3, 4
+)
+SELECT
+    {select_season}{team_column},
+    COUNT(DISTINCT match_id) AS matches_played,
+    ROUND(AVG(phase_runs), 2) AS {primary_metric},
+    ROUND(SUM(phase_runs) * 6.0 / NULLIF(SUM(legal_balls), 0), 2) AS {secondary_metric}
+FROM phase_innings
+{outer_where}
+GROUP BY {group_season}{team_column}
+ORDER BY {('season ASC, ' if request['split_by_year'] else '')}{primary_metric} ASC, {team_column}
+LIMIT 50
+""".strip()
+        else:
+            team_column = "batting_team"
+            primary_metric = f"avg_runs_{request['phase_alias']}"
+            secondary_metric = f"avg_run_rate_{request['phase_alias']}"
+            outer_where = ""
+            if request["target_team"] and not request["compare_against_league"]:
+                outer_where = f"WHERE batting_team = '{target_team_sql}'"
+            sql = f"""
+WITH phase_innings AS (
+    SELECT
+        CAST(EXTRACT(YEAR FROM m.date_start) AS INT) AS season_year,
+        m.match_id,
+        i.innings_num,
+        i.batting_team AS batting_team,
+        SUM(d.runs_total) AS phase_runs,
+        COUNT(*) FILTER (
+            WHERE COALESCE(d.extras_wides, 0) = 0
+              AND COALESCE(d.extras_noballs, 0) = 0
+        ) AS legal_balls
+    FROM matches m
+    JOIN innings i ON m.match_id = i.match_id
+    JOIN deliveries d ON m.match_id = d.match_id AND i.innings_num = d.innings_num
+    WHERE {request['sql_filter']}
+      AND CAST(EXTRACT(YEAR FROM m.date_start) AS INT) IN ({year_sql})
+      AND {phase_condition}
+    GROUP BY 1, 2, 3, 4
+)
+SELECT
+    {select_season}{team_column},
+    COUNT(DISTINCT match_id) AS matches_played,
+    ROUND(AVG(phase_runs), 2) AS {primary_metric},
+    ROUND(SUM(phase_runs) * 6.0 / NULLIF(SUM(legal_balls), 0), 2) AS {secondary_metric}
+FROM phase_innings
+{outer_where}
+GROUP BY {group_season}{team_column}
+ORDER BY {('season ASC, ' if request['split_by_year'] else '')}{primary_metric} DESC, {team_column}
+LIMIT 50
+""".strip()
+
+            if not request["split_by_year"]:
+                chart_config = {
+                    "type": "horizontalbar",
+                    "title": (
+                        f"{request['competition_label']} Teams: Batting in {request['phase_label'].title()} "
+                        f"({years_title})"
+                    ),
+                    "x_field": team_column,
+                    "y_field": primary_metric,
+                }
+
+        columns, rows = self._execute_sql(sql)
+        row_lists = [list(row) for row in rows]
+        if not row_lists:
+            return {
+                "question": question,
+                "sql": sql,
+                "columns": columns,
+                "rows": [],
+                "answer": "No matching records found in the database for this team phase comparison.",
+                "error": None,
+                "chart_config": None,
+                "context_summary": (
+                    f"No {request['competition_label']} {request['mode']} {request['phase_label']} results "
+                    f"for seasons {years_text}"
+                ),
+                "new_fact": None,
+                "display_hint": {"format": "table", "stat_type": "team"},
+                "sections": None,
+                "model_used": "deterministic-team-phase",
+            }
+
+        team_idx = columns.index(team_column)
+        primary_idx = columns.index(primary_metric)
+        secondary_idx = columns.index(secondary_metric)
+        season_idx = columns.index("season") if request["split_by_year"] else None
+
+        def _metric_text(row: list) -> str:
+            primary_val = float(row[primary_idx]) if row[primary_idx] is not None else 0.0
+            secondary_val = float(row[secondary_idx]) if row[secondary_idx] is not None else 0.0
+            if request["mode"] == "bowling":
+                return f"conceded {primary_val:.2f} runs at an economy of {secondary_val:.2f}"
+            return f"averaged {primary_val:.2f} runs at a run rate of {secondary_val:.2f}"
+
+        if request["split_by_year"]:
+            season_groups: dict[int, list[list]] = {}
+            for row in row_lists:
+                season_groups.setdefault(int(row[season_idx]), []).append(row)
+
+            if request["target_team"]:
+                season_bits = []
+                for season in sorted(season_groups):
+                    season_rows = season_groups[season]
+                    target_row = next((row for row in season_rows if row[team_idx] == request["target_team"]), None)
+                    if not target_row:
+                        continue
+                    rank = season_rows.index(target_row) + 1
+                    season_bits.append(
+                        f"In {season}, {request['target_team']} ranked {self._ordinal_rank(rank)} of {len(season_rows)} teams and {_metric_text(target_row)}."
+                    )
+
+                if season_bits:
+                    answer = (
+                        f"For the {request['competition_label']} {years_text} seasons, "
+                        f"{self._possessive_label(request['target_team'])} {request['mode']} in the {request['phase_label']} compares as follows: "
+                        + " ".join(season_bits)
+                    )
+                else:
+                    answer = (
+                        f"The table shows {request['competition_label']} {request['mode']} comparisons in the "
+                        f"{request['phase_label']} for the {years_text} seasons."
+                    )
+            else:
+                leader_bits = []
+                for season in sorted(season_groups):
+                    leader_row = season_groups[season][0]
+                    leader_bits.append(
+                        f"In {season}, {leader_row[team_idx]} led the league and {_metric_text(leader_row)}."
+                    )
+                answer = (
+                    f"The {request['competition_label']} {request['mode']} comparison in the {request['phase_label']} "
+                    f"for {years_text} shows clear season-by-season differences. " + " ".join(leader_bits)
+                )
+        else:
+            target_row = None
+            if request["target_team"]:
+                target_row = next((row for row in row_lists if row[team_idx] == request["target_team"]), None)
+
+            if target_row is not None and request["compare_against_league"]:
+                rank = row_lists.index(target_row) + 1
+                answer = (
+                    f"Across the {request['competition_label']} {years_text} seasons, {request['target_team']} "
+                    f"{_metric_text(target_row)} in the {request['phase_label']}, ranking "
+                    f"{self._ordinal_rank(rank)} of {len(row_lists)} teams. The table shows how they compare with the rest of the league."
+                )
+            elif target_row is not None:
+                answer = (
+                    f"Across the {request['competition_label']} {years_text} seasons, {request['target_team']} "
+                    f"{_metric_text(target_row)} in the {request['phase_label']}."
+                )
+            else:
+                leader_row = row_lists[0]
+                answer = (
+                    f"Across the {request['competition_label']} {years_text} seasons, {leader_row[team_idx]} had the best "
+                    f"{request['mode']} numbers in the {request['phase_label']} and {_metric_text(leader_row)}."
+                )
+
+        context_target = f" for {request['target_team']}" if request["target_team"] else ""
+        context_scope = " vs league" if request["compare_against_league"] else ""
+        context_summary = (
+            f"{request['competition_label']} {request['mode']} {request['phase_label']}{context_target}{context_scope}, "
+            f"seasons {years_text} via Cricsheet data"
+        )
+
+        return {
+            "question": question,
+            "sql": sql,
+            "columns": columns,
+            "rows": row_lists,
+            "answer": answer,
+            "error": None,
+            "chart_config": chart_config,
+            "context_summary": context_summary,
+            "new_fact": None,
+            "display_hint": {"format": "table", "stat_type": "team"},
+            "sections": None,
+            "model_used": "deterministic-team-phase",
         }
 
     def _detect_latest_match_request(self, question: str) -> dict | None:
@@ -2781,6 +3538,7 @@ class CricketQueryEngine:
 
     def _execute_sql(self, sql: str) -> tuple[list[str], list[tuple]]:
         """Execute SQL and return (column_names, rows)."""
+        sql = self._normalize_duckdb_date_arithmetic(sql)
         sql = self._normalize_team_names(sql)
         con = self._get_connection()
         try:
@@ -2790,6 +3548,36 @@ class CricketQueryEngine:
             return columns, rows
         finally:
             con.close()
+
+    @staticmethod
+    def _prune_empty_metric_rows(columns: list[str], rows: list[list]) -> list[list]:
+        """Drop rows whose non-identifier fields are entirely null when better rows exist."""
+        if len(rows) <= 1 or not columns:
+            return rows
+
+        identifier_tokens = (
+            "name",
+            "player",
+            "team",
+            "format",
+            "competition",
+            "season",
+            "year",
+            "match",
+            "innings",
+        )
+        metric_indexes = [
+            idx for idx, col in enumerate(columns)
+            if not any(token in col.lower().replace('"', '') for token in identifier_tokens)
+        ]
+        if not metric_indexes:
+            return rows
+
+        filtered_rows = [
+            row for row in rows
+            if any(row[idx] is not None and row[idx] != "" for idx in metric_indexes)
+        ]
+        return filtered_rows or rows
 
     def _format_results(self, columns: list[str], rows: list[tuple]) -> str:
         """Format query results as a readable string for the LLM."""
@@ -3624,11 +4412,12 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
 
         # Step 0: Resolve player names (zero LLM calls)
         player_matches = self._resolve_players(question)
+        suppress_low_confidence_player_matches = self._should_suppress_low_confidence_player_matches(question)
         player_context_parts = []
         resolved_names: set[str] = set()  # track already-resolved canonical names
 
         def _build_player_filter(c: dict) -> str:
-            """Build a [PLAYER FILTER] annotation with exact SQL WHERE clauses."""
+            """Build a [PLAYER FILTER] annotation with exact SQL WHERE clauses and context."""
             parts = [f'[PLAYER FILTER for "{c["canonical_name"]}"']
             kid = c.get("kaggle_player_id")
             cs = c.get("cricsheet_name", "")
@@ -3638,12 +4427,20 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                 parts.append(f"  Kaggle filter: player_name ILIKE '%{c['canonical_name']}%'")
             if cs:
                 parts.append(f"  Cricsheet filter: batter = '{cs}'")
-            parts.append(f"  Team: {c.get('team', '')}]")
+            team = (c.get("team") or "").strip()
+            if team:
+                parts.append(
+                    f"  Context only: primary team = {team} (disambiguation only; do not add a team filter unless the user explicitly asks for it)"
+                )
+            parts.append("]")
             return "\n".join(parts)
 
         for pm in player_matches:
             token = pm["query_token"]
             cands = pm["candidates"]
+            confidence = pm.get("confidence", "high")
+            if confidence == "low" and suppress_low_confidence_player_matches:
+                continue
             if len(cands) == 1:
                 # Unambiguous — inject resolved name
                 c = cands[0]
@@ -3710,6 +4507,10 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
             if record_resp:
                 return record_resp
 
+        team_phase_resp = self._build_team_phase_comparison_response(question, history)
+        if team_phase_resp is not None:
+            return team_phase_resp
+
         latest_scorecard_result = self._build_latest_match_scorecard_response(question)
         if latest_scorecard_result is not None:
             return latest_scorecard_result
@@ -3726,7 +4527,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
 
         # Step 0c: Check query cache (zero LLM calls for repeated questions)
         if not bypass_cache:
-            cached = self._cache_lookup(question)
+            cached = self._cache_lookup(question, history=history)
             if cached:
                 return cached
 
@@ -3813,7 +4614,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
         try:
             columns, rows = self._execute_sql(sql)
             result["columns"] = columns
-            result["rows"] = [list(r) for r in rows]
+            result["rows"] = self._prune_empty_metric_rows(columns, [list(r) for r in rows])
         except Exception as e:
             result["error"] = f"SQL execution failed: {e}"
             # Retry with compact prompt to stay within gpt-4o-mini token limits
@@ -3825,7 +4626,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                 result["sql"] = retry_sql
                 columns, rows = self._execute_sql(retry_sql)
                 result["columns"] = columns
-                result["rows"] = [list(r) for r in rows]
+                result["rows"] = self._prune_empty_metric_rows(columns, [list(r) for r in rows])
                 result["error"] = None
             except Exception as e2:
                 result["error"] = f"SQL retry also failed: {e2}"
@@ -3870,7 +4671,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
 
         # Step 5: Cache successful results
         if not result.get("error") and not bypass_cache:
-            self._cache_store(question, result)
+            self._cache_store(question, result, history=history)
 
         return result
 

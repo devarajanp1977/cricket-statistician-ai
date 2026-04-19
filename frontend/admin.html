@@ -688,20 +688,41 @@
             try {
                 const resp = await fetch(withBasePath(`/api/admin/${action}`), { method: 'POST' });
                 const data = await resp.json();
+                const lines = [];
 
                 if (data.log) {
-                    logPanel.textContent = data.log;
+                    lines.push(data.log);
                 }
+
+                const totalSteps = Array.isArray(data.steps) ? data.steps.length : 0;
+                const successfulSteps = totalSteps
+                    ? data.steps.filter(step => step && step.ok).length
+                    : 0;
 
                 if (data.status === 'ok') {
-                    logPanel.textContent += '\n✅ Completed successfully.';
+                    lines.push('SUCCESS: completed successfully.');
+                } else if (data.status === 'partial') {
+                    lines.push(`PARTIAL FAILURE: completed ${successfulSteps}/${totalSteps} steps before stopping.`);
+                    if (data.error) {
+                        lines.push(`ERROR: ${data.error}`);
+                    }
                 } else {
-                    logPanel.textContent += '\n⚠️ Completed with warnings.';
+                    lines.push('FAILED: action did not complete successfully.');
+                    if (data.error) {
+                        lines.push(`ERROR: ${data.error}`);
+                    }
                 }
 
-                // Refresh status
-                await loadStatus();
-                await loadProfileStatus();
+                if (!resp.ok && !data.error && data.status !== 'partial') {
+                    lines.push(`HTTP ERROR: ${resp.status}`);
+                }
+
+                logPanel.textContent = lines.join('\n\n');
+
+                if (data.status === 'ok' || data.status === 'partial') {
+                    await loadStatus();
+                    await loadProfileStatus();
+                }
             } catch (err) {
                 logPanel.textContent += `\n❌ Error: ${err.message}`;
             }

@@ -5,10 +5,11 @@ import sys
 import json
 import asyncio
 import re
+import time
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -266,15 +267,94 @@ async def admin_status():
         con.close()
 
 
-def _run_script_sync(func, *args, **kwargs) -> str:
-    """Run a script function, capture its print output."""
+def _run_script_step(name: str, func, *args, **kwargs) -> dict:
+    """Run one admin step and capture structured success/failure details."""
     buf = StringIO()
+    started = time.perf_counter()
     try:
         with redirect_stdout(buf), redirect_stderr(buf):
             func(*args, **kwargs)
-        return buf.getvalue()
-    except Exception as e:
-        return buf.getvalue() + f"\nERROR: {e}"
+        ok = True
+        error = None
+    except Exception as exc:
+        ok = False
+        error = str(exc)
+    duration = round(time.perf_counter() - started, 2)
+    return {
+        "name": name,
+        "ok": ok,
+        "error": error,
+        "log": buf.getvalue().strip(),
+        "duration_seconds": duration,
+    }
+
+
+def _format_admin_pipeline_log(step_results: list[dict], cache_result: dict | None = None) -> str:
+    """Format structured admin step results into a readable log string."""
+    parts: list[str] = []
+    for step in step_results:
+        status_label = "OK" if step.get("ok") else "ERROR"
+        parts.append(f"[{status_label}] {step.get('name')} ({step.get('duration_seconds', 0):.2f}s)")
+        if step.get("log"):
+            parts.append(step["log"])
+        if step.get("error"):
+            parts.append(f"ERROR: {step['error']}")
+        parts.append("")
+
+    if cache_result is not None:
+        if cache_result.get("ok"):
+            parts.append(
+                f"[CACHE] Invalidated query cache. data_version={cache_result.get('data_version')}"
+            )
+        else:
+            parts.append(f"[CACHE] ERROR: {cache_result.get('error', 'cache invalidation failed')}")
+
+    return "\n".join(parts).strip()
+
+
+def _run_admin_pipeline(steps: list[tuple[str, object, dict]], invalidate_cache: bool = False) -> dict:
+    """Run admin steps sequentially and return a structured status payload."""
+    step_results: list[dict] = []
+    successful_steps = 0
+
+    for name, func, kwargs in steps:
+        step_result = _run_script_step(name, func, **kwargs)
+        step_results.append(step_result)
+        if step_result.get("ok"):
+            successful_steps += 1
+            continue
+        break
+
+    cache_result = None
+    if invalidate_cache and successful_steps > 0:
+        cache_result = engine.invalidate_cache(clear_entries=True)
+
+    has_step_failure = any(not step.get("ok") for step in step_results)
+    cache_failure = cache_result is not None and not cache_result.get("ok")
+
+    if has_step_failure or cache_failure:
+        status = "partial" if successful_steps > 0 else "error"
+    else:
+        status = "ok"
+
+    first_error = next((step.get("error") for step in step_results if step.get("error")), None)
+    if not first_error and cache_failure:
+        first_error = cache_result.get("error")
+
+    return {
+        "status": status,
+        "steps": step_results,
+        "log": _format_admin_pipeline_log(step_results, cache_result),
+        "error": first_error,
+        "cache_invalidated": bool(cache_result and cache_result.get("ok")),
+        "data_version": cache_result.get("data_version") if cache_result and cache_result.get("ok") else None,
+    }
+
+
+def _admin_json_response(payload: dict) -> JSONResponse:
+    """Convert structured admin payloads to success/error HTTP responses."""
+    status_code = 200 if payload.get("status") == "ok" else 500
+    return JSONResponse(status_code=status_code, content=payload)
 
 
 @app.post("/api/admin/refresh-cricsheet")
@@ -284,12 +364,11 @@ async def refresh_cricsheet():
     from load_cricsheet import load_cricsheet
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: (
-        _run_script_sync(download_cricsheet, force=True)
-        + "\n"
-        + _run_script_sync(load_cricsheet, force=True)
-    ))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("download_cricsheet", download_cricsheet, {"force": True}),
+        ("load_cricsheet", load_cricsheet, {"force": True}),
+    ], invalidate_cache=True))
+    return _admin_json_response(payload)
 
 
 @app.post("/api/admin/refresh-kaggle")
@@ -299,12 +378,11 @@ async def refresh_kaggle():
     from load_kaggle import load_kaggle
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: (
-        _run_script_sync(download_kaggle)
-        + "\n"
-        + _run_script_sync(load_kaggle, force=True)
-    ))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("download_kaggle", download_kaggle, {}),
+        ("load_kaggle", load_kaggle, {"force": True}),
+    ], invalidate_cache=True))
+    return _admin_json_response(payload)
 
 
 @app.post("/api/admin/backfill")
@@ -313,8 +391,10 @@ async def run_backfill():
     from backfill_tests import backfill
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: _run_script_sync(backfill))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("backfill", backfill, {}),
+    ], invalidate_cache=True))
+    return _admin_json_response(payload)
 
 
 @app.post("/api/admin/full-refresh")
@@ -326,14 +406,14 @@ async def full_refresh():
     from backfill_tests import backfill
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: (
-        _run_script_sync(download_cricsheet, force=True)
-        + "\n" + _run_script_sync(download_kaggle)
-        + "\n" + _run_script_sync(load_cricsheet, force=True)
-        + "\n" + _run_script_sync(load_kaggle, force=True)
-        + "\n" + _run_script_sync(backfill)
-    ))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("download_cricsheet", download_cricsheet, {"force": True}),
+        ("download_kaggle", download_kaggle, {}),
+        ("load_cricsheet", load_cricsheet, {"force": True}),
+        ("load_kaggle", load_kaggle, {"force": True}),
+        ("backfill", backfill, {}),
+    ], invalidate_cache=True))
+    return _admin_json_response(payload)
 
 
 # ── Knowledge Base endpoints ────────────────────────────────────────────────
@@ -435,8 +515,20 @@ async def cache_stats():
 @app.post("/api/admin/cache-clear")
 async def cache_clear():
     """Clear the query cache."""
-    engine.clear_cache()
-    return {"status": "ok"}
+    cache_result = engine.invalidate_cache(clear_entries=True)
+    payload = {
+        "status": "ok" if cache_result.get("ok") else "error",
+        "steps": [],
+        "log": (
+            f"[CACHE] Invalidated query cache. data_version={cache_result.get('data_version')}"
+            if cache_result.get("ok")
+            else f"[CACHE] ERROR: {cache_result.get('error', 'cache invalidation failed')}"
+        ),
+        "error": None if cache_result.get("ok") else cache_result.get("error"),
+        "cache_invalidated": bool(cache_result.get("ok")),
+        "data_version": cache_result.get("data_version") if cache_result.get("ok") else None,
+    }
+    return _admin_json_response(payload)
 
 
 # ── Player Profile endpoints ────────────────────────────────────────────────
@@ -447,8 +539,10 @@ async def seed_profiles():
     from seed_player_profiles import seed
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: _run_script_sync(seed, refresh=False, report_only=False))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("seed_player_profiles", seed, {"refresh": False, "report_only": False}),
+    ], invalidate_cache=False))
+    return _admin_json_response(payload)
 
 
 @app.post("/api/admin/refresh-profiles")
@@ -457,8 +551,10 @@ async def refresh_profiles():
     from seed_player_profiles import seed
 
     loop = asyncio.get_event_loop()
-    log = await loop.run_in_executor(None, lambda: _run_script_sync(seed, refresh=True, report_only=False))
-    return {"status": "ok", "log": log}
+    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+        ("refresh_player_profiles", seed, {"refresh": True, "report_only": False}),
+    ], invalidate_cache=False))
+    return _admin_json_response(payload)
 
 
 @app.get("/api/admin/profile-status")
