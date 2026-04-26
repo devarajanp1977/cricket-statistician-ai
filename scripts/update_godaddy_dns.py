@@ -35,9 +35,10 @@ def main() -> int:
     api_secret = get_env("GODADDY_API_SECRET")
     domain = get_env("GODADDY_DOMAIN")
     record_name = os.getenv("GODADDY_RECORD_NAME", "@")
+    target_ip = os.getenv("GODADDY_TARGET_IP")
     ttl = int(os.getenv("GODADDY_TTL", "600"))
 
-    public_ip = get_public_ip()
+    public_ip = target_ip or get_public_ip()
     base = "https://api.godaddy.com/v1/domains"
     record_url = f"{base}/{domain}/records/A/{record_name}"
 

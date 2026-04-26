@@ -1,10 +1,15 @@
+import asyncio
+import json
 import os
 import tempfile
 import unittest
 from unittest import mock
 
+import duckdb
+
 from app.engine import CricketQueryEngine
 from app import main as app_main
+import seed_player_profiles
 
 
 class QueryCacheRegressionTests(unittest.TestCase):
@@ -122,6 +127,49 @@ class AdminPipelineRegressionTests(unittest.TestCase):
         self.assertIn("[ERROR] load", payload["log"])
         self.assertIn("ERROR: load failed", payload["log"])
         fake_engine.invalidate_cache.assert_called_once_with(clear_entries=True)
+
+    def test_locked_admin_pipeline_rejects_concurrent_mutation(self):
+        acquired = app_main._ADMIN_JOB_LOCK.acquire(blocking=False)
+        self.assertTrue(acquired)
+        app_main._ADMIN_ACTIVE_JOB = "refresh-cricsheet"
+        try:
+            response = asyncio.run(app_main._run_locked_admin_pipeline("full-refresh", []))
+        finally:
+            app_main._ADMIN_ACTIVE_JOB = None
+            app_main._ADMIN_JOB_LOCK.release()
+
+        payload = json.loads(response.body.decode("utf-8"))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["status"], "error")
+        self.assertEqual(payload["error"], "Admin action already running: refresh-cricsheet")
+        self.assertIn("[BUSY]", payload["log"])
+
+
+class SeedProfilesRegressionTests(unittest.TestCase):
+    def test_full_seed_skips_existing_profiles(self):
+        con = duckdb.connect(":memory:")
+        try:
+            con.execute("""
+                CREATE TABLE players (
+                    cricsheet_id VARCHAR,
+                    key_cricinfo VARCHAR,
+                    name VARCHAR
+                )
+            """)
+            con.execute("CREATE TABLE player_profiles (cricsheet_id VARCHAR)")
+            con.execute("""
+                INSERT INTO players VALUES
+                ('p1', '101', 'Already Seeded'),
+                ('p2', '202', 'Needs Seed'),
+                ('p3', NULL, 'No Cricinfo Id')
+            """)
+            con.execute("INSERT INTO player_profiles VALUES ('p1')")
+
+            players = seed_player_profiles.get_players_to_fetch(con, refresh=False)
+        finally:
+            con.close()
+
+        self.assertEqual(players, [("p2", "202", "Needs Seed")])
 
 
 if __name__ == "__main__":

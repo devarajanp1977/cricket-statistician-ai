@@ -4,7 +4,7 @@ Fetches batting_style, bowling_style, playing_role, and more for every
 Cricsheet player that has a key_cricinfo (ESPN ID) — 99.8% of all players.
 
 Features:
-  - Full seed: fetches all players with key_cricinfo
+    - Full seed: fetches players with key_cricinfo that are not seeded yet
   - Incremental refresh (--refresh): only new + stale active profiles
   - tqdm progress bar with ETA
   - Checkpoint/resume every 100 players
@@ -13,7 +13,7 @@ Features:
   - Coverage report at the end
 
 Usage:
-    python scripts/seed_player_profiles.py             # full seed (skips existing via checkpoint)
+    python scripts/seed_player_profiles.py             # full seed (missing profiles only; resumes via checkpoint)
     python scripts/seed_player_profiles.py --refresh    # incremental: new + stale active
     python scripts/seed_player_profiles.py --report     # coverage report only (no fetching)
 """
@@ -271,11 +271,12 @@ def get_players_to_fetch(con: duckdb.DuckDBPyConnection, refresh: bool = False) 
             combined[r[0]] = r
         return list(combined.values())
     else:
-        # Full seed: all with key_cricinfo
+        # Full seed: only players not yet present in player_profiles
         return con.execute("""
             SELECT p.cricsheet_id, p.key_cricinfo, p.name
             FROM players p
             WHERE p.key_cricinfo IS NOT NULL
+              AND p.cricsheet_id NOT IN (SELECT cricsheet_id FROM player_profiles)
             ORDER BY p.cricsheet_id
         """).fetchall()
 

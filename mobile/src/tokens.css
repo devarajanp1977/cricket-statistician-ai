@@ -1,0 +1,57 @@
+/* Cricket Statistician — Light theme. White paper. NO orange/red/cream. */
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Surface — plain white, soft greys */
+  --bg-0: #FFFFFF;       /* page — plain white */
+  --bg-1: #FFFFFF;       /* card */
+  --bg-2: #F4F6F9;       /* subtle fill */
+  --bg-3: #E9EDF2;       /* hover / chip */
+  --line: #E2E7EE;
+  --line-soft: #EEF1F5;
+
+  /* Ink */
+  --ink-0: #0B1B2B;      /* near-black ink */
+  --ink-1: #243447;
+  --ink-2: #4D6178;
+  --ink-3: #7B8FA6;
+  --ink-4: #B6C2D1;
+
+  /* Brand — Team India blue. NO orange, red, green, or cream. */
+  --primary: #1A4FA0;    /* India blue — primary accent */
+  --primary-deep: #103573;
+  --primary-soft: rgba(26,79,160,0.10);
+  --teal: #0EA5A1;       /* secondary accent */
+  --cyan: #2B8AD9;       /* info / links — lighter India sky */
+  --magenta: #8B3FB8;    /* highlight / losses */
+  --gold: #B68A1E;       /* records */
+  --warn: #C28A0E;       /* warnings (mustard) */
+
+  /* Format colors */
+  --fmt-test: #B68A1E;   /* gold */
+  --fmt-odi: #2B8AD9;    /* sky */
+  --fmt-t20: #8B3FB8;    /* magenta */
+
+  /* Radii & shadows — soft, papery */
+  --r-sm: 8px;
+  --r-md: 14px;
+  --r-lg: 20px;
+  --r-xl: 28px;
+  --shadow-card: 0 1px 0 rgba(11,27,43,0.04), 0 1px 2px rgba(11,27,43,0.04);
+  --shadow-glow: 0 0 0 1.5px var(--primary), 0 6px 16px rgba(15,138,110,0.18);
+
+  /* Type */
+  --f-display: 'Sora', -apple-system, system-ui, sans-serif;
+  --f-cond: 'Sora', sans-serif;
+  --f-body: 'Inter', -apple-system, system-ui, sans-serif;
+  --f-mono: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: #EEF1F5;
+  font-family: var(--f-body);
+  color: var(--ink-0);
+  -webkit-font-smoothing: antialiased;
+}

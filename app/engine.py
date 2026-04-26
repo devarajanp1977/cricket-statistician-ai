@@ -4248,6 +4248,26 @@ Results:
         r"\b(?:record|stats?|statistics|career|performance|numbers?)\b",
         _re.IGNORECASE,
     )
+    _PLAYER_BATTING_SUMMARY_PATTERN = _re.compile(
+        r"\b(?:batting|batter|runs?|average|avg|strike\s*rate|sr|balls?\s*faced|dismissals?|not\s*out|centur(?:y|ies)|fift(?:y|ies)|form)\b",
+        _re.IGNORECASE,
+    )
+    _PLAYER_BOWLING_SUMMARY_PATTERN = _re.compile(
+        r"\b(?:bowling|bowler|wickets?|economy|maiden|maidens|conceded|bowling\s+average|bowling\s+strike\s+rate)\b",
+        _re.IGNORECASE,
+    )
+    _PLAYER_FIELDING_SUMMARY_PATTERN = _re.compile(
+        r"\b(?:fielding|catches?|stumpings?|run\s+outs?|keeper|dismissals?\s+as\s+(?:keeper|fielder))\b",
+        _re.IGNORECASE,
+    )
+    _RELATIVE_DATE_WINDOW_PATTERN = _re.compile(
+        r"\b(?:last|past)\s+(\d+)\s*(day|days|week|weeks|month|months|year|years)\b",
+        _re.IGNORECASE,
+    )
+    _RELATIVE_DATE_WINDOW_SINGLE_PATTERN = _re.compile(
+        r"\b(?:last|past)\s+(day|week|month|year)\b",
+        _re.IGNORECASE,
+    )
 
     # Event-name mapping for franchise/format filters
     _EVENT_FILTER_MAP = {
@@ -4272,6 +4292,187 @@ Results:
             if key in q_lower:
                 return sql_filt, label
         return "", "all formats"
+
+    def _resolve_event_filter_from_context(self, question: str,
+                                           history: list[dict] | None = None) -> tuple[str, str]:
+        """Resolve a competition filter from the current turn, falling back to history."""
+        candidate_texts = [question]
+        for turn in reversed(history or []):
+            candidate_texts.append(turn.get("question", ""))
+
+        for text in candidate_texts:
+            if not text:
+                continue
+            sql_filter, label = self._detect_event_filter(text)
+            if sql_filter:
+                return sql_filter, label
+
+        return "", "all formats"
+
+    @classmethod
+    def _resolve_relative_date_filter(cls, question: str,
+                                      history: list[dict] | None = None) -> tuple[str | None, str | None]:
+        """Resolve a recent time window like last year or past 3 months."""
+        candidate_texts = [question]
+        for turn in reversed(history or []):
+            candidate_texts.append(turn.get("question", ""))
+
+        for text in candidate_texts:
+            if not text:
+                continue
+
+            amount = None
+            unit_text = None
+
+            match = cls._RELATIVE_DATE_WINDOW_PATTERN.search(text)
+            if match:
+                amount = int(match.group(1))
+                unit_text = match.group(2)
+            else:
+                match = cls._RELATIVE_DATE_WINDOW_SINGLE_PATTERN.search(text)
+                if match:
+                    amount = 1
+                    unit_text = match.group(1)
+
+            if amount is None or unit_text is None:
+                continue
+
+            unit = unit_text.lower().rstrip("s")
+            label = f"last {amount} {unit}" + ("" if amount == 1 else "s")
+            return f"m.date_start >= CURRENT_DATE - INTERVAL {amount} {unit.upper()}", label
+
+        return None, None
+
+    def _build_recent_player_batting_summary_response(self, question: str, cricsheet_name: str,
+                                                      canonical_name: str,
+                                                      history: list[dict] | None = None) -> dict | None:
+        """Build a deterministic batting summary for recent single-player form queries."""
+        if not question:
+            return None
+        if self._PLAYER_BOWLING_SUMMARY_PATTERN.search(question):
+            return None
+        if self._PLAYER_FIELDING_SUMMARY_PATTERN.search(question):
+            return None
+        if not self._PLAYER_BATTING_SUMMARY_PATTERN.search(question):
+            return None
+
+        date_filter, date_label = self._resolve_relative_date_filter(question, history)
+        if not date_filter:
+            return None
+
+        event_filter, event_label = self._resolve_event_filter_from_context(question, history)
+        safe_name = cricsheet_name.replace("'", "''")
+        where_clauses = [f"d.batter = '{safe_name}'", date_filter]
+        if event_filter:
+            where_clauses.append(event_filter)
+        where_sql = "\n      AND ".join(where_clauses)
+
+        sql = f"""
+WITH bat_innings AS (
+    SELECT
+        d.batter AS player_name,
+        d.match_id,
+        d.innings_num,
+        SUM(d.runs_batter) AS innings_runs,
+        COUNT(*) FILTER (WHERE COALESCE(d.extras_wides, 0) = 0) AS balls_faced,
+        MAX(
+            CASE
+                WHEN w.player_out IS NOT NULL
+                 AND w.kind NOT IN ('retired hurt', 'retired out') THEN 1
+                ELSE 0
+            END
+        ) AS dismissed
+    FROM deliveries d
+    JOIN matches m ON d.match_id = m.match_id
+    LEFT JOIN wickets w
+        ON d.match_id = w.match_id
+       AND d.innings_num = w.innings_num
+       AND d.over_num = w.over_num
+       AND d.ball_num = w.ball_num
+       AND w.player_out = d.batter
+    WHERE {where_sql}
+    GROUP BY d.batter, d.match_id, d.innings_num
+)
+SELECT
+    player_name,
+    COUNT(DISTINCT match_id) AS matches,
+    COUNT(*) AS innings,
+    SUM(innings_runs) AS runs,
+    SUM(balls_faced) AS balls_faced,
+    SUM(dismissed) AS dismissals,
+    ROUND(SUM(innings_runs) * 1.0 / NULLIF(SUM(dismissed), 0), 2) AS batting_avg,
+    ROUND(SUM(innings_runs) * 100.0 / NULLIF(SUM(balls_faced), 0), 2) AS strike_rate
+FROM bat_innings
+GROUP BY player_name
+LIMIT 1
+""".strip()
+
+        try:
+            columns, rows = self._execute_sql(sql)
+        except Exception:
+            return None
+
+        row_lists = [list(row) for row in rows]
+        if not row_lists:
+            scope_label = f"{event_label} over the {date_label}" if event_filter else f"all formats over the {date_label}"
+            return {
+                "question": question,
+                "sql": sql,
+                "columns": columns,
+                "rows": [],
+                "answer": f"No batting records were found for {canonical_name} in {scope_label}.",
+                "error": None,
+                "chart_config": None,
+                "context_summary": f"No recent batting data for {canonical_name}",
+                "new_fact": None,
+                "display_hint": {"format": "stats", "stat_type": "batting"},
+                "sections": None,
+                "model_used": "deterministic-player-batting",
+                "cached": False,
+                "candidates": None,
+                "original_question": None,
+                "profile": None,
+            }
+
+        row = row_lists[0]
+        matches = int(row[1] or 0)
+        innings = int(row[2] or 0)
+        runs = int(row[3] or 0)
+        batting_avg = float(row[6]) if row[6] is not None else None
+        strike_rate = float(row[7]) if row[7] is not None else None
+        scope_label = f"{event_label} over the {date_label}" if event_filter else f"all formats over the {date_label}"
+
+        answer = (
+            f"Across {scope_label}, {canonical_name} scored {runs} runs in {innings} innings "
+            f"from {matches} matches"
+        )
+        if batting_avg is not None and strike_rate is not None:
+            answer += f", averaging {batting_avg:.2f} at a strike rate of {strike_rate:.2f}."
+        elif batting_avg is not None:
+            answer += f", averaging {batting_avg:.2f}."
+        elif strike_rate is not None:
+            answer += f" at a strike rate of {strike_rate:.2f}."
+        else:
+            answer += "."
+
+        return {
+            "question": question,
+            "sql": sql,
+            "columns": columns,
+            "rows": row_lists,
+            "answer": answer,
+            "error": None,
+            "chart_config": None,
+            "context_summary": f"{canonical_name} batting summary, {scope_label} via Cricsheet data",
+            "new_fact": None,
+            "display_hint": {"format": "stats", "stat_type": "batting"},
+            "sections": None,
+            "model_used": "deterministic-player-batting",
+            "cached": False,
+            "candidates": None,
+            "original_question": None,
+            "profile": None,
+        }
 
     def _build_career_record_response(self, question: str, cricsheet_name: str,
                                       canonical_name: str) -> dict | None:
@@ -4495,6 +4696,14 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                     if profile_resp:
                         return profile_resp
                     break
+
+        if len(player_matches) == 1 and len(player_matches[0]["candidates"]) == 1:
+            c = player_matches[0]["candidates"][0]
+            recent_batting_resp = self._build_recent_player_batting_summary_response(
+                question, c["cricsheet_name"], c["canonical_name"], history
+            )
+            if recent_batting_resp:
+                return recent_batting_resp
 
         # Step 0b2: Career record template for "X's record/stats in IPL" queries
         if (self._RECORD_QUERY_PATTERN.search(question)

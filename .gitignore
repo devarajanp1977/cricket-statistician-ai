@@ -27,3 +27,8 @@ data/*.log
 # Temp debug scripts
 scripts/_*
 scripts/__pycache__/
+
+scripts/.secrets/
+scripts/.oracle_vm_state.json
+data/logs/
+

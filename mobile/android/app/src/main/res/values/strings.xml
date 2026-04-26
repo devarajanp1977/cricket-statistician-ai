@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Cricket Statistician</string>
+    <string name="title_activity_main">Cricket Statistician</string>
+    <string name="package_name">com.cricketstats.app</string>
+    <string name="custom_url_scheme">com.cricketstats.app</string>
+</resources>

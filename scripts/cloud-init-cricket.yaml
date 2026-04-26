@@ -1,0 +1,103 @@
+#cloud-config
+# Cloud-init userdata for the Cricket Statistician AI Oracle ARM VM.
+# Installs Python 3.11, cloudflared, and prepares /opt/cricket-statistician-ai
+# for code + DuckDB deployment from the developer machine.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - software-properties-common
+  - git
+  - build-essential
+  - curl
+  - ca-certificates
+  - ufw
+  - rsync
+  - jq
+  - unzip
+  - sqlite3
+
+write_files:
+  - path: /etc/systemd/system/cricket-api.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Cricket Statistician AI FastAPI
+      After=network.target
+
+      [Service]
+      Type=simple
+      User=cricket
+      Group=cricket
+      WorkingDirectory=/opt/cricket-statistician-ai
+      EnvironmentFile=-/opt/cricket-statistician-ai/.env
+      ExecStart=/opt/cricket-statistician-ai/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080
+      Restart=always
+      RestartSec=5
+      LimitNOFILE=65535
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/systemd/system/cricket-tunnel.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Cloudflare Tunnel for Cricket Statistician AI
+      After=network.target cricket-api.service
+      Requires=cricket-api.service
+
+      [Service]
+      Type=simple
+      User=cricket
+      Group=cricket
+      ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --config /home/cricket/.cloudflared/config.yml run
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  # Python 3.11 from deadsnakes (Ubuntu 22.04 default is 3.10)
+  - add-apt-repository -y ppa:deadsnakes/ppa
+  - apt-get update -y
+  - DEBIAN_FRONTEND=noninteractive apt-get install -y python3.11 python3.11-venv python3.11-dev python3-pip
+
+  # cloudflared (ARM64)
+  - curl -fsSL -o /tmp/cloudflared.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64.deb
+  - dpkg -i /tmp/cloudflared.deb || apt-get -f install -y
+  - install -m 0755 /usr/bin/cloudflared /usr/local/bin/cloudflared || true
+
+  # App user + directories
+  - id -u cricket >/dev/null 2>&1 || useradd -m -s /bin/bash cricket
+  - mkdir -p /opt/cricket-statistician-ai/data/db /opt/cricket-statistician-ai/data/logs /home/cricket/.cloudflared
+  - chown -R cricket:cricket /opt/cricket-statistician-ai /home/cricket/.cloudflared
+
+  # Allow the cricket user to be reachable via SSH using the same key as ubuntu user
+  - mkdir -p /home/cricket/.ssh
+  - cp /home/ubuntu/.ssh/authorized_keys /home/cricket/.ssh/authorized_keys
+  - chmod 700 /home/cricket/.ssh
+  - chmod 600 /home/cricket/.ssh/authorized_keys
+  - chown -R cricket:cricket /home/cricket/.ssh
+
+  # Firewall: SSH only. The FastAPI port is bound to 127.0.0.1 and is reached only via cloudflared.
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+
+  # Oracle Linux iptables on Ubuntu image — flush the default INPUT DROP rule that blocks new ports
+  # (Oracle's Ubuntu image ships an iptables rule that only allows established+SSH; ufw above is
+  # additive but iptables-legacy comes first. Flush the legacy chain so ufw is authoritative.)
+  - iptables -P INPUT ACCEPT || true
+  - iptables -F INPUT || true
+  - netfilter-persistent save || true
+
+  # Reload systemd so the unit files are visible (services start after deploy step)
+  - systemctl daemon-reload
+  - systemctl enable cricket-api.service
+  - systemctl enable cricket-tunnel.service
+
+final_message: "Cricket Statistician AI base VM is ready. Deploy code with scripts/deploy_to_oracle_vm.ps1."

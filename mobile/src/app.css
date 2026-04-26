@@ -1,0 +1,73 @@
+/* Mobile-app shell styles. Layered on top of design tokens. */
+
+@import './tokens.css';
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-0);
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  overscroll-behavior-y: none;
+}
+
+input, textarea, [contenteditable="true"], .selectable, .selectable * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+@keyframes dot {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-2px); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-2) 0%, var(--bg-3) 50%, var(--bg-2) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+  border-radius: 6px;
+}
+
+button, [role="button"] {
+  transition: transform 0.08s ease, opacity 0.12s ease;
+  font-family: inherit;
+}
+button:active, [role="button"]:active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.app-frame {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+.scroll-area {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}

@@ -20,10 +20,14 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f5f5;
             color: #1a1a1a;
-            height: 100vh;
+            min-height: 100svh;
+            height: 100svh;
             display: flex;
             overflow: hidden;
+            -webkit-text-size-adjust: 100%;
         }
+
+        body.mobile-sidebar-open { overflow: hidden; }
 
         /* ── Sidebar ─────────────────────────────────────────────── */
         #sidebar {
@@ -39,6 +43,17 @@
         }
 
         #sidebar.collapsed { margin-left: -280px; }
+
+        #sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(2px);
+            z-index: 15;
+        }
+
+        #sidebar-backdrop.visible { display: block; }
 
         .sidebar-header {
             padding: 14px 16px;
@@ -176,6 +191,34 @@
             text-align: center;
             color: #bbb;
             font-size: 13px;
+        }
+
+        .sidebar-footer {
+            padding: 12px 16px 16px;
+            border-top: 1px solid #e5e7eb;
+            display: none;
+        }
+
+        .sidebar-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            min-height: 42px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            background: #f8fafc;
+            color: #0f172a;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 600;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+        }
+
+        .sidebar-link:hover {
+            border-color: #16a34a;
+            background: #f0fdf4;
+            color: #166534;
         }
 
         /* ── Main area ───────────────────────────────────────────── */
@@ -693,6 +736,8 @@
             border-radius: 10px; padding: 12px 16px; color: #1a1a1a;
             font-size: 15px; font-family: inherit; outline: none;
             transition: border-color 0.2s;
+            min-width: 0;
+            min-height: 48px;
         }
 
         #question-input:focus { border-color: #16a34a; }
@@ -702,6 +747,8 @@
             background: #16a34a; color: #fff; border: none;
             border-radius: 10px; padding: 12px 20px; font-size: 14px;
             font-weight: 600; cursor: pointer; transition: background 0.2s;
+            min-height: 48px;
+            white-space: nowrap;
         }
 
         #send-btn:hover { background: #15803d; }
@@ -805,14 +852,317 @@
 
         /* Responsive */
         @media (max-width: 768px) {
+            body {
+                min-height: 100svh;
+                height: 100svh;
+            }
+
             #sidebar {
                 position: fixed;
-                left: 0; top: 0;
-                height: 100vh;
+                top: 0;
+                left: 0;
+                width: min(86vw, 320px);
+                min-width: 0;
+                height: 100svh;
+                margin-left: 0;
+                transform: translateX(0);
                 box-shadow: 4px 0 20px rgba(0,0,0,0.15);
             }
-            #sidebar.collapsed { margin-left: -280px; box-shadow: none; }
-            .chart-container { width: 100% !important; }
+
+            #sidebar.collapsed {
+                margin-left: 0;
+                transform: translateX(-104%);
+                box-shadow: none;
+            }
+
+            .sidebar-header,
+            .sidebar-search,
+            .sidebar-filters {
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .sidebar-footer {
+                display: block;
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .session-item {
+                padding: 10px 14px;
+                gap: 10px;
+            }
+
+            .session-actions {
+                display: flex;
+            }
+
+            #main {
+                width: 100%;
+            }
+
+            header {
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 8px;
+                padding: 12px 14px;
+            }
+
+            #sidebar-toggle {
+                min-width: 40px;
+                min-height: 40px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }
+
+            header h1 {
+                flex: 1 1 auto;
+                min-width: 0;
+                font-size: 15px;
+                line-height: 1.2;
+            }
+
+            header .badge {
+                font-size: 10px;
+                padding: 3px 7px;
+            }
+
+            #db-stats {
+                display: none;
+            }
+
+            #llm-status,
+            .header-link {
+                font-size: 11px;
+            }
+
+            #chat-container {
+                padding: 16px 12px 20px;
+                gap: 14px;
+            }
+
+            .message {
+                max-width: 100%;
+            }
+
+            .message.user,
+            .message.assistant {
+                padding: 14px;
+                border-radius: 10px;
+            }
+
+            .message.assistant .answer {
+                font-size: 14px;
+                line-height: 1.65;
+            }
+
+            .loading {
+                max-width: 100%;
+                padding: 14px;
+            }
+
+            #input-area {
+                padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+            }
+
+            #input-wrapper {
+                max-width: 100%;
+                gap: 8px;
+            }
+
+            #question-input {
+                font-size: 16px;
+                padding: 12px 14px;
+            }
+
+            #send-btn {
+                padding: 12px 16px;
+            }
+
+            .examples {
+                margin: 24px auto;
+            }
+
+            .examples h2 {
+                font-size: 20px;
+            }
+
+            .example-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .chart-wrapper {
+                display: flex;
+                flex-direction: column;
+            }
+
+            .chart-toolbar {
+                position: static;
+                opacity: 1;
+                justify-content: flex-end;
+                padding: 8px 8px 0;
+                flex-wrap: wrap;
+            }
+
+            .chart-container,
+            .chart-container.expanded {
+                width: 100% !important;
+                min-width: 0;
+                height: 280px;
+            }
+
+            .stat-section,
+            .profile-stats-section,
+            .sc-body {
+                overflow-x: auto;
+                max-width: 100%;
+            }
+
+            .stat-table {
+                min-width: 460px;
+            }
+
+            .profile-card {
+                flex-direction: column;
+                gap: 14px;
+                padding: 16px;
+                max-width: none;
+            }
+
+            .profile-card .profile-photo,
+            .profile-card .profile-photo-placeholder {
+                width: 72px;
+                height: 72px;
+            }
+
+            .profile-card .profile-meta span {
+                display: block;
+                margin-right: 0;
+                margin-bottom: 6px;
+            }
+
+            .profile-stats-table {
+                min-width: 640px;
+            }
+
+            .profile-coverage-notes {
+                max-width: none;
+            }
+
+            .data-table-wrapper .table-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+                padding: 10px 12px;
+            }
+
+            .data-table-wrapper table {
+                min-width: 620px;
+            }
+
+            .scorecard {
+                border-radius: 8px;
+            }
+
+            .sc-banner-top,
+            .sc-result-bar,
+            .sc-inn-header {
+                padding: 12px 14px;
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 6px;
+            }
+
+            .sc-venue,
+            .sc-innings-score,
+            .sc-team-scores {
+                text-align: left;
+            }
+
+            .sc-teams {
+                flex-direction: column;
+            }
+
+            .sc-team {
+                padding: 12px 14px;
+            }
+
+            .sc-team + .sc-team {
+                border-left: none;
+                border-top: 1px solid #e5e7eb;
+            }
+
+            .sc-section-label,
+            .sc-fow,
+            .sc-dnb {
+                padding-left: 14px;
+                padding-right: 14px;
+            }
+
+            .sc-table {
+                min-width: 620px;
+            }
+
+            .modal {
+                width: min(92vw, 360px);
+                min-width: 0;
+                padding: 20px;
+            }
+
+            #undo-toast {
+                width: calc(100vw - 28px);
+                max-width: 420px;
+                bottom: calc(84px + env(safe-area-inset-bottom));
+                padding: 10px 14px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            header {
+                padding: 10px 12px;
+            }
+
+            header h1 {
+                font-size: 14px;
+            }
+
+            .header-link,
+            #llm-status {
+                display: none;
+            }
+
+            #chat-container {
+                padding: 14px 10px 18px;
+            }
+
+            .message.user,
+            .message.assistant {
+                padding: 12px;
+            }
+
+            #input-area {
+                padding-left: 10px;
+                padding-right: 10px;
+            }
+
+            #input-wrapper {
+                flex-direction: column;
+            }
+
+            #send-btn {
+                width: 100%;
+            }
+
+            .chart-container,
+            .chart-container.expanded {
+                height: 250px;
+            }
+
+            .example-btn {
+                font-size: 12.5px;
+                padding: 12px 14px;
+            }
         }
 
         /* ── Scorecard (ESPN CricInfo light style) ────────── */
@@ -1169,7 +1519,11 @@
         <span class="filter-pill" data-filter="all" onclick="setFilter('all')">All</span>
     </div>
     <div id="session-list"></div>
+    <div class="sidebar-footer">
+        <a href="__APP_BASE_PATH__/admin" class="sidebar-link">Data Management</a>
+    </div>
 </div>
+<div id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
 <!-- ── Main ─────────────────────────────────────────────────────── -->
 <div id="main">
@@ -1267,6 +1621,7 @@ function createNewSession() {
     setActiveSessionId(session.id);
     renderSessionList();
     renderChat();
+    closeSidebar();
     document.getElementById('question-input').focus();
 }
 
@@ -1274,6 +1629,7 @@ function switchSession(id) {
     setActiveSessionId(id);
     renderSessionList();
     renderChat();
+    closeSidebar();
 }
 
 function getActiveSession() {
@@ -2639,8 +2995,42 @@ async function sendQuestion() {
 // ═══════════════════════════════════════════════════════════════════
 
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('collapsed');
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('collapsed');
+    syncSidebarState();
 }
+
+function closeSidebar() {
+    if (!isMobileLayout()) return;
+    document.getElementById('sidebar').classList.add('collapsed');
+    syncSidebarState();
+}
+
+function isMobileLayout() {
+    return window.innerWidth <= 768;
+}
+
+function syncSidebarState(force = false) {
+    const sidebar = document.getElementById('sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (!sidebar || !backdrop) return;
+
+    const mobile = isMobileLayout();
+    if (mobile) {
+        if (force || !syncSidebarState.wasMobile) {
+            sidebar.classList.add('collapsed');
+        }
+    } else {
+        sidebar.classList.remove('collapsed');
+    }
+
+    const sidebarOpen = mobile && !sidebar.classList.contains('collapsed');
+    backdrop.classList.toggle('visible', sidebarOpen);
+    document.body.classList.toggle('mobile-sidebar-open', sidebarOpen);
+    syncSidebarState.wasMobile = mobile;
+}
+
+syncSidebarState.wasMobile = isMobileLayout();
 
 // ═══════════════════════════════════════════════════════════════════
 // UTILITIES
@@ -2749,7 +3139,10 @@ fetch(withBasePath('/api/stats'))
         renderSessionList();
         renderChat();
     }
+    syncSidebarState(true);
 })();
+
+window.addEventListener('resize', () => syncSidebarState());
 </script>
 </body>
 </html>

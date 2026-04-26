@@ -6,6 +6,7 @@ import json
 import asyncio
 import re
 import time
+import threading
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .engine import CricketQueryEngine
+from .auth import (
+    AUTH_ENABLED,
+    AuthUser,
+    get_current_user,
+    require_user,
+    supabase_rest,
+)
+from fastapi import Depends
 
 # Knowledge base path
 KB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "knowledge_base.json")
@@ -22,6 +31,9 @@ APP_BASE_PATH = os.getenv("APP_BASE_PATH", "").strip()
 if APP_BASE_PATH and not APP_BASE_PATH.startswith("/"):
     APP_BASE_PATH = "/" + APP_BASE_PATH
 APP_BASE_PATH = APP_BASE_PATH.rstrip("/")
+
+_ADMIN_JOB_LOCK = threading.Lock()
+_ADMIN_ACTIVE_JOB: str | None = None
 
 
 def _load_kb() -> dict:
@@ -198,6 +210,80 @@ async def rate_limits():
     return resp
 
 
+# ── Auth + per-user endpoints (Supabase) ────────────────────────────────────
+
+class ChatTurnIn(BaseModel):
+    session_id: str
+    role: str
+    content: str
+    metadata: dict | None = None
+
+
+class BookmarkIn(BaseModel):
+    title: str
+    query: str
+    answer: str | None = None
+    tags: list[str] = []
+
+
+@app.get("/api/auth/me")
+async def auth_me(user: AuthUser | None = Depends(get_current_user)):
+    """Return the current authenticated user, or null + auth_enabled flag."""
+    if user is None:
+        return {"user": None, "auth_enabled": AUTH_ENABLED}
+    return {
+        "user": {"id": user.id, "email": user.email, "role": user.role},
+        "auth_enabled": AUTH_ENABLED,
+    }
+
+
+@app.get("/api/chat/history")
+async def chat_history_list(
+    session_id: str | None = None,
+    limit: int = 100,
+    user: AuthUser = Depends(require_user),
+):
+    rows = await supabase_rest.list_chat_history(user.id, session_id, limit=limit)
+    return {"items": rows}
+
+
+@app.post("/api/chat/history")
+async def chat_history_add(
+    turn: ChatTurnIn,
+    user: AuthUser = Depends(require_user),
+):
+    saved = await supabase_rest.insert_chat_turn(
+        user.id, turn.session_id, turn.role, turn.content, turn.metadata
+    )
+    return {"item": saved}
+
+
+@app.get("/api/bookmarks")
+async def bookmarks_list(user: AuthUser = Depends(require_user)):
+    return {"items": await supabase_rest.list_bookmarks(user.id)}
+
+
+@app.post("/api/bookmarks")
+async def bookmarks_add(bm: BookmarkIn, user: AuthUser = Depends(require_user)):
+    saved = await supabase_rest.add_bookmark(
+        user.id, bm.title, bm.query, bm.answer, bm.tags
+    )
+    return {"item": saved}
+
+
+@app.delete("/api/bookmarks/{bookmark_id}")
+async def bookmarks_delete(
+    bookmark_id: str, user: AuthUser = Depends(require_user)
+):
+    await supabase_rest.delete_bookmark(user.id, bookmark_id)
+    return {"ok": True}
+
+
+@app.on_event("shutdown")
+async def _close_supabase():
+    await supabase_rest.aclose()
+
+
 # ── Admin / Data Management endpoints ───────────────────────────────────────
 
 @app.get("/admin")
@@ -357,18 +443,54 @@ def _admin_json_response(payload: dict) -> JSONResponse:
     return JSONResponse(status_code=status_code, content=payload)
 
 
+def _admin_busy_response(requested_action: str) -> JSONResponse:
+    """Return a conflict response when another admin mutation is already running."""
+    active_action = _ADMIN_ACTIVE_JOB or "another admin action"
+    payload = {
+        "status": "error",
+        "steps": [],
+        "log": f"[BUSY] {requested_action} blocked while {active_action} is already running.",
+        "error": f"Admin action already running: {active_action}",
+        "cache_invalidated": False,
+        "data_version": None,
+    }
+    return JSONResponse(status_code=409, content=payload)
+
+
+async def _run_locked_admin_pipeline(
+    action_name: str,
+    steps: list[tuple[str, object, dict]],
+    invalidate_cache: bool = False,
+) -> JSONResponse:
+    """Run a mutating admin pipeline only when no other admin mutation is active."""
+    global _ADMIN_ACTIVE_JOB
+
+    if not _ADMIN_JOB_LOCK.acquire(blocking=False):
+        return _admin_busy_response(action_name)
+
+    _ADMIN_ACTIVE_JOB = action_name
+    try:
+        loop = asyncio.get_running_loop()
+        payload = await loop.run_in_executor(
+            None,
+            lambda: _run_admin_pipeline(steps, invalidate_cache=invalidate_cache),
+        )
+        return _admin_json_response(payload)
+    finally:
+        _ADMIN_ACTIVE_JOB = None
+        _ADMIN_JOB_LOCK.release()
+
+
 @app.post("/api/admin/refresh-cricsheet")
 async def refresh_cricsheet():
     """Download latest Cricsheet data and reload into DB."""
     from download_data import download_cricsheet
     from load_cricsheet import load_cricsheet
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("refresh-cricsheet", [
         ("download_cricsheet", download_cricsheet, {"force": True}),
         ("load_cricsheet", load_cricsheet, {"force": True}),
-    ], invalidate_cache=True))
-    return _admin_json_response(payload)
+    ], invalidate_cache=True)
 
 
 @app.post("/api/admin/refresh-kaggle")
@@ -377,12 +499,10 @@ async def refresh_kaggle():
     from download_data import download_kaggle
     from load_kaggle import load_kaggle
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("refresh-kaggle", [
         ("download_kaggle", download_kaggle, {}),
         ("load_kaggle", load_kaggle, {"force": True}),
-    ], invalidate_cache=True))
-    return _admin_json_response(payload)
+    ], invalidate_cache=True)
 
 
 @app.post("/api/admin/backfill")
@@ -390,11 +510,9 @@ async def run_backfill():
     """Run backfill to sync missing Test matches from Cricsheet into Kaggle tables."""
     from backfill_tests import backfill
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("backfill", [
         ("backfill", backfill, {}),
-    ], invalidate_cache=True))
-    return _admin_json_response(payload)
+    ], invalidate_cache=True)
 
 
 @app.post("/api/admin/full-refresh")
@@ -405,15 +523,13 @@ async def full_refresh():
     from load_kaggle import load_kaggle
     from backfill_tests import backfill
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("full-refresh", [
         ("download_cricsheet", download_cricsheet, {"force": True}),
         ("download_kaggle", download_kaggle, {}),
         ("load_cricsheet", load_cricsheet, {"force": True}),
         ("load_kaggle", load_kaggle, {"force": True}),
         ("backfill", backfill, {}),
-    ], invalidate_cache=True))
-    return _admin_json_response(payload)
+    ], invalidate_cache=True)
 
 
 # ── Knowledge Base endpoints ────────────────────────────────────────────────
@@ -538,11 +654,9 @@ async def seed_profiles():
     """Seed player_profiles table from ESPN Cricinfo (full seed)."""
     from seed_player_profiles import seed
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("seed-profiles", [
         ("seed_player_profiles", seed, {"refresh": False, "report_only": False}),
-    ], invalidate_cache=False))
-    return _admin_json_response(payload)
+    ], invalidate_cache=False)
 
 
 @app.post("/api/admin/refresh-profiles")
@@ -550,11 +664,9 @@ async def refresh_profiles():
     """Incremental refresh of player_profiles (new + stale active)."""
     from seed_player_profiles import seed
 
-    loop = asyncio.get_event_loop()
-    payload = await loop.run_in_executor(None, lambda: _run_admin_pipeline([
+    return await _run_locked_admin_pipeline("refresh-profiles", [
         ("refresh_player_profiles", seed, {"refresh": True, "report_only": False}),
-    ], invalidate_cache=False))
-    return _admin_json_response(payload)
+    ], invalidate_cache=False)
 
 
 @app.get("/api/admin/profile-status")
