@@ -40,7 +40,7 @@ An AI-powered cricket statistician that answers natural-language questions about
 - **Database**: DuckDB (fast analytical queries on local data)
 - **Data**: Cricsheet JSON + Kaggle CSVs → normalized into DuckDB tables
 - **Backend**: Python + FastAPI
-- **Frontend**: TBD
+- **Frontend**: Static HTML/JS served by FastAPI
 
 ## Project Structure
 
@@ -79,6 +79,73 @@ python load_kaggle.py                        # load CSVs → DuckDB
 python scripts/refresh.py --force   # re-downloads + reloads everything
 python scripts/refresh.py           # incremental (only loads new matches)
 ```
+
+### Start the local app
+
+The chat UI is served by the FastAPI app, so local development uses one runtime service. The startup script validates the required pieces before it returns success:
+
+- Python is available on PATH
+- `data/db/cricket.duckdb` exists and is non-empty
+- `GITHUB_TOKEN` is available in the environment or `.env`
+- The app responds on `/health`, `/`, and `/api/stats`
+
+PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_local_services.ps1
+```
+
+Batch entry point:
+
+```bat
+scripts\start_local_services.bat
+```
+
+Optional flags:
+
+- `-Port 8081` to run on a different port
+- `-AppBasePath /cricstats` to set the reverse-proxy base path used by generated frontend links
+- `-NoBrowser` to skip auto-opening the UI
+- `-Inline` to run Uvicorn in the current terminal instead of a new PowerShell window
+
+Notes:
+
+- Direct local access is always `http://127.0.0.1:<port>/`
+- `APP_BASE_PATH` is for reverse-proxy deployments such as Caddy path-prefix hosting; it does not change the local Uvicorn route mount
+- Startup logs are written under `data/logs/`
+
+### Control the local app
+
+PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\status_local_services.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\stop_local_services.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\restart_local_services.ps1
+```
+
+Batch entry points:
+
+```bat
+scripts\status_local_services.bat
+scripts\stop_local_services.bat
+scripts\restart_local_services.bat
+```
+
+Generic batch aliases:
+
+```bat
+scripts\start_services.bat
+scripts\status_services.bat
+scripts\stop_services.bat
+scripts\restart_services.bat
+```
+
+Notes:
+
+- The status script returns success only when the listener, frontend route, `/health`, and `/api/stats` are all working
+- The stop script shuts down the Python listener on the target port and also closes the launcher PowerShell window when the app was started by `start_local_services.ps1`
+- Use `-Force` with `stop_local_services.ps1` if you need to stop a listener on the chosen port even when it cannot be positively identified as this app
 
 ## Expose It On Your Own Domain
 
@@ -121,6 +188,8 @@ If `devarajan.in` is only for this laptop-hosted app:
 - Point it to your current public IPv4 address
 
 If your home IP changes often, use [scripts/update_godaddy_dns.py](scripts/update_godaddy_dns.py) with a scheduled task.
+
+For a fixed host such as the Contabo VPS, set `GODADDY_TARGET_IP` before running the script so the record is updated to that exact address instead of the local machine's current public IP.
 
 ### 4. Configure router port forwarding
 
