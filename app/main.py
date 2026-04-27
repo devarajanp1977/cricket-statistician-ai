@@ -289,7 +289,19 @@ async def _close_supabase():
 @app.get("/admin")
 async def admin_page():
     """Serve the data management UI."""
-    return _render_frontend_html("admin.html")
+    return _render_frontend_html("ops.html")
+
+
+@app.get("/data")
+async def data_page():
+    """Serve the data management artboard."""
+    return _render_frontend_html("ops.html")
+
+
+@app.get("/knowledge")
+async def knowledge_page():
+    """Serve the knowledge base artboard."""
+    return _render_frontend_html("ops.html")
 
 
 @app.get("/api/admin/status")

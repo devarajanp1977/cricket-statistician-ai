@@ -41,6 +41,24 @@ class SqlDateNormalizationTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNotNone(rows[0][0])
 
+    def test_apply_question_sql_guards_rewrites_bad_kaggle_player_join(self):
+        sql = """
+        SELECT kp.player_name, COUNT(*) AS centuries
+        FROM kaggle_batting kb
+        JOIN kaggle_players kp ON kb.batsman = kp.player_name
+        WHERE kb.runs >= 100
+        GROUP BY kp.player_name
+        ORDER BY centuries DESC
+        LIMIT 1
+        """.strip()
+
+        normalized = CricketQueryEngine._apply_question_sql_guards(
+            sql, "Who has the most centuries in Test cricket?"
+        )
+
+        self.assertIn("kb.batsman = kp.player_id", normalized)
+        self.assertNotIn("kb.batsman = kp.player_name", normalized)
+
     def test_prune_empty_metric_rows_keeps_only_rows_with_real_stats(self):
         columns = ["player_name", "avg_runs", "avg_strike_rate"]
         rows = [

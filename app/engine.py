@@ -2458,7 +2458,35 @@ class CricketQueryEngine:
         sql = cls._normalize_duckdb_date_arithmetic(sql)
         sql = cls._normalize_team_names(sql)
         sql = cls._enforce_gender_filter(sql, question)
+        sql = cls._fix_kaggle_player_joins(sql)
         sql = cls._fix_bowling_wicket_join(sql)
+        return sql
+
+    @staticmethod
+    def _fix_kaggle_player_joins(sql: str) -> str:
+        """Rewrite bad Kaggle joins that compare numeric player ids to player_name."""
+        numeric_expr = (
+            r'(?:'
+            r'\w+\.(?:batsman|player|player1|player2)'
+            r'|\w+\."bowler id"'
+            r'|TRY_CAST\([^)]*\bbowler\b[^)]*AS\s+BIGINT\)'
+            r'|TRY_CAST\([^)]*\bfielders\b[^)]*AS\s+BIGINT\)'
+            r'|TRY_CAST\([^)]*\bplayer\b[^)]*AS\s+BIGINT\)'
+            r')'
+        )
+
+        sql = _re.sub(
+            rf'({numeric_expr})\s*=\s*(\w+)\.player_name\b',
+            r'\1 = \2.player_id',
+            sql,
+            flags=_re.IGNORECASE,
+        )
+        sql = _re.sub(
+            rf'(\w+)\.player_name\b\s*=\s*({numeric_expr})',
+            r'\1.player_id = \2',
+            sql,
+            flags=_re.IGNORECASE,
+        )
         return sql
 
     @staticmethod
