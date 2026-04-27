@@ -1201,12 +1201,15 @@
             background:
                 radial-gradient(circle at top left, rgba(26, 79, 160, 0.08), transparent 28%),
                 linear-gradient(180deg, #f7f9fc 0%, var(--app-bg) 100%);
+            scrollbar-gutter: stable both-edges;
         }
 
         #sidebar {
             background: var(--app-surface);
             border-right-color: var(--app-line);
             box-shadow: 10px 0 30px rgba(11, 27, 43, 0.04);
+            min-height: 0;
+            overflow: hidden;
         }
 
         #sidebar-backdrop {
@@ -1215,38 +1218,42 @@
         }
 
         .sidebar-header {
-            padding: 16px 16px 14px;
+            padding: calc(env(safe-area-inset-top) + 26px) 18px 18px;
             border-bottom-color: var(--app-line-soft);
             flex-direction: column;
             align-items: stretch;
-            gap: 14px;
+            gap: 16px;
         }
 
         .brand-lockup {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 14px;
         }
 
         .brand-mark {
-            width: 38px;
-            height: 38px;
-            border-radius: 12px;
+            width: 46px;
+            height: 46px;
+            border-radius: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
             background: linear-gradient(180deg, var(--app-primary) 0%, var(--app-primary-deep) 100%);
             color: #fff;
-            font-family: var(--app-font-display);
-            font-size: 13px;
-            font-weight: 800;
-            letter-spacing: 0.04em;
             box-shadow: 0 10px 24px rgba(26, 79, 160, 0.22);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .brand-mark svg {
+            width: 26px;
+            height: 26px;
+            display: block;
         }
 
         .sidebar-header h2 {
             flex: none;
-            font-size: 14px;
+            font-size: 15px;
             font-family: var(--app-font-display);
             font-weight: 800;
             color: var(--app-ink-0);
@@ -1254,9 +1261,9 @@
         }
 
         .brand-subtitle {
-            margin-top: 3px;
+            margin-top: 4px;
             font-family: var(--app-font-mono);
-            font-size: 9px;
+            font-size: 9.5px;
             color: var(--app-ink-3);
             letter-spacing: 0.16em;
             text-transform: uppercase;
@@ -1310,7 +1317,10 @@
         }
 
         #session-list {
-            padding: 8px;
+            padding: 10px 8px 16px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
         }
 
         .session-item {
@@ -2320,6 +2330,11 @@
             padding: 0 22px;
         }
 
+        #main {
+            min-height: 0;
+            overflow: hidden;
+        }
+
         .topbar-left {
             gap: 14px;
             min-width: 220px;
@@ -2403,9 +2418,12 @@
 
         #chat-thread {
             border-right: 1px solid var(--app-line);
+            min-height: 0;
+            overflow: hidden;
         }
 
         #chat-meta {
+            flex: 0 0 auto;
             padding: 32px 56px 0;
             max-width: none;
             margin: 0;
@@ -2426,8 +2444,13 @@
         }
 
         #chat-container {
+            flex: 1 1 auto;
+            min-height: 0;
             padding: 28px 56px 180px;
             gap: 28px;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            scrollbar-gutter: stable;
         }
 
         .examples {
@@ -2459,6 +2482,12 @@
             max-width: none;
             width: 100%;
             margin: 0;
+        }
+
+        #input-area {
+            flex: 0 0 auto;
+            position: relative;
+            z-index: 1;
         }
 
         .message.user,
@@ -2795,6 +2824,10 @@
         }
 
         @media (max-width: 768px) {
+            .sidebar-header {
+                padding: calc(env(safe-area-inset-top) + 18px) 16px 16px;
+            }
+
             .sidebar-nav,
             .sidebar-recent-head,
             #session-list,
@@ -3191,10 +3224,20 @@
 <div id="sidebar">
     <div class="sidebar-header">
         <div class="brand-lockup">
-            <div class="brand-mark">CS</div>
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="presentation" focusable="false">
+                    <circle cx="24" cy="24" r="10.75" stroke="currentColor" stroke-width="2.25"/>
+                    <path d="M19 14.5C22.1667 17.3333 23.75 20.5 23.75 24C23.75 27.5 22.1667 30.6667 19 33.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                    <path d="M29 14.5C25.8333 17.3333 24.25 20.5 24.25 24C24.25 27.5 25.8333 30.6667 29 33.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                    <path d="M15 37.5H33" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                    <path d="M18.5 37.5V31.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                    <path d="M24 37.5V29.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                    <path d="M29.5 37.5V31.5" stroke="currentColor" stroke-width="2.25" stroke-linecap="round"/>
+                </svg>
+            </div>
             <div>
                 <h2>Cricket Statistician</h2>
-                <div class="brand-subtitle">cricket.devarajan.in</div>
+                <div class="brand-subtitle">Test / ODI / IPL intelligence</div>
             </div>
         </div>
         <button id="new-chat-btn" onclick="createNewSession()">
@@ -3414,7 +3457,7 @@ function createNewSession() {
     renderSessionList();
     renderChat();
     closeSidebar();
-    document.getElementById('question-input').focus();
+    focusComposer(true);
 }
 
 function switchSession(id) {
@@ -3422,6 +3465,7 @@ function switchSession(id) {
     renderSessionList();
     renderChat();
     closeSidebar();
+    focusComposer(true);
 }
 
 function getActiveSession() {
@@ -3433,9 +3477,20 @@ function getActiveSession() {
 let appStatsCache = null;
 let sidebarCountsCache = null;
 
-function focusComposer() {
+function resetViewportScroll() {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+}
+
+function focusComposer(preventScroll = false) {
     const composer = document.getElementById('question-input');
-    if (composer) composer.focus();
+    if (!composer) return;
+    try {
+        composer.focus({ preventScroll });
+    } catch {
+        composer.focus();
+    }
 }
 
 async function shareCurrentView() {
@@ -3896,7 +3951,7 @@ function renderSessionList() {
         return;
     }
 
-    list.innerHTML = sessions.slice(0, 8).map(s => {
+    list.innerHTML = sessions.map(s => {
         const time = formatRelativeTime(s.updatedAt);
         const msgCount = s.messages.filter(m => m.role === 'user').length;
         const accent = inferSessionFormat(s);
@@ -3926,6 +3981,7 @@ function renderChat() {
     const session = getActiveSession();
 
     updateConversationChrome();
+    resetViewportScroll();
 
     if (!session || session.messages.length === 0) {
         container.innerHTML = `
@@ -3942,6 +3998,7 @@ function renderChat() {
                 </div>
             </div>
         `;
+        container.scrollTop = 0;
         return;
     }
 
