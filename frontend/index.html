@@ -2547,6 +2547,154 @@
             background: rgba(139, 63, 184, 0.08);
         }
 
+        .answer-insight-strip {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+            gap: 10px;
+            margin-top: 16px;
+        }
+
+        .answer-insight-card {
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px solid var(--app-line);
+            background: linear-gradient(180deg, var(--app-surface-soft) 0%, var(--app-surface) 100%);
+        }
+
+        .answer-insight-kicker {
+            font-family: var(--app-font-mono);
+            font-size: 9.5px;
+            color: var(--app-ink-3);
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .answer-insight-value {
+            margin-top: 8px;
+            font-family: var(--app-font-display);
+            font-size: 23px;
+            font-weight: 800;
+            letter-spacing: -0.03em;
+            color: var(--app-ink-0);
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .answer-result-card {
+            margin-top: 18px;
+            border-radius: 18px;
+            border: 1px solid var(--app-line);
+            background: var(--app-surface);
+            box-shadow: var(--app-shadow);
+            overflow: hidden;
+        }
+
+        .answer-result-head {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--app-line);
+            background: linear-gradient(180deg, rgba(244, 246, 249, 0.92) 0%, rgba(255, 255, 255, 0.96) 100%);
+        }
+
+        .answer-result-copy {
+            min-width: 0;
+        }
+
+        .answer-result-kicker {
+            font-family: var(--app-font-mono);
+            font-size: 9.5px;
+            color: var(--app-primary);
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .answer-result-title {
+            margin-top: 7px;
+            font-family: var(--app-font-display);
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: var(--app-ink-0);
+            line-height: 1.2;
+        }
+
+        .answer-result-detail {
+            margin-top: 6px;
+            color: var(--app-ink-3);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .answer-result-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
+        .answer-result-btn {
+            min-height: 30px;
+            padding: 0 10px;
+            border-radius: 999px;
+            border: 1px solid var(--app-line);
+            background: var(--app-surface);
+            color: var(--app-ink-2);
+            font-family: var(--app-font-mono);
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s, color 0.15s;
+        }
+
+        .answer-result-btn:hover {
+            border-color: var(--app-primary);
+            background: #eef3fb;
+            color: var(--app-primary);
+        }
+
+        .answer-result-body {
+            padding: 18px;
+        }
+
+        .answer-result-body > .stat-section:first-child,
+        .answer-result-body > .data-table-wrapper:first-child,
+        .answer-result-body > .scorecard:first-child {
+            margin-top: 0;
+        }
+
+        .answer-result-card .data-table-wrapper {
+            margin-top: 0;
+            border-radius: 14px;
+            box-shadow: none;
+        }
+
+        .answer-result-card .data-table-wrapper .table-header {
+            padding: 12px 14px;
+        }
+
+        .answer-result-card.expanded .data-table-wrapper .scroll-area {
+            max-height: none;
+        }
+
+        .answer-inline-sql {
+            margin-top: 16px;
+            border-radius: 14px;
+            border: 1px solid var(--app-line);
+            box-shadow: none;
+        }
+
+        .answer-inline-sql[style*='display: block'] {
+            display: block !important;
+        }
+
         .message.assistant .answer,
         .message.error .answer {
             max-width: 680px;
@@ -3847,6 +3995,158 @@ function wrapAssistantMessage(html, isError) {
     `;
 }
 
+const resultDatasetStore = Object.create(null);
+
+function shouldRenderModelTag(modelUsed) {
+    return Boolean(modelUsed && modelUsed !== 'gpt-4.1' && !/template/i.test(modelUsed));
+}
+
+function escapeCsvValue(value) {
+    const text = value == null ? '' : String(value);
+    if (/[",\r\n]/.test(text)) {
+        return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
+}
+
+function registerResultDataset(columns, rows) {
+    const datasetId = `result-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    resultDatasetStore[datasetId] = { columns, rows };
+    return datasetId;
+}
+
+function downloadResultDataset(datasetId) {
+    const dataset = resultDatasetStore[datasetId];
+    if (!dataset) return;
+    const lines = [
+        dataset.columns.map(escapeCsvValue).join(','),
+        ...dataset.rows.map(row => row.map(escapeCsvValue).join(',')),
+    ];
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${datasetId}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function toggleSqlBlock(sqlId, btn) {
+    const el = document.getElementById(sqlId);
+    if (!el) return;
+    const isOpen = el.style.display === 'block';
+    el.style.display = isOpen ? 'none' : 'block';
+    if (btn) btn.textContent = isOpen ? 'SQL' : 'Hide SQL';
+}
+
+function toggleResultCard(cardId, btn) {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    const expanded = card.classList.toggle('expanded');
+    if (btn) btn.textContent = expanded ? 'Collapse' : 'Open';
+}
+
+function findResultSubject(columns, row) {
+    const preferred = ['player_name', 'player', 'name', 'batter', 'bowler', 'team', 'country', 'venue', 'match'];
+    for (const key of preferred) {
+        const idx = columns.findIndex(col => col.toLowerCase().replace(/\s+/g, '_').includes(key));
+        if (idx >= 0 && row[idx] != null && row[idx] !== '') return String(row[idx]);
+    }
+    const fallbackIdx = columns.findIndex((col, idx) => !isNumericColumn([row], idx));
+    return fallbackIdx >= 0 && row[fallbackIdx] != null ? String(row[fallbackIdx]) : '';
+}
+
+function pickInsightMetrics(columns, row, displayHint) {
+    const statType = (displayHint && displayHint.stat_type) || detectStatType(columns);
+    const priorityMap = {
+        batting: ['runs', 'batting_avg', 'average', 'highest_score', 'centuries', 'strike_rate', 'fifties', 'inns', 'innings', 'matches'],
+        bowling: ['wickets', 'bowling_avg', 'average', 'economy', 'best', 'maidens', 'overs', 'runs_conceded'],
+        allround: ['runs', 'wickets', 'batting_avg', 'bowling_avg', 'economy', 'strike_rate'],
+        general: ['count', 'total', 'runs', 'wickets', 'average', 'score', 'rate', 'matches'],
+    };
+    const priority = priorityMap[statType] || priorityMap.general;
+
+    return columns
+        .map((col, idx) => {
+            const lower = col.toLowerCase().replace(/\s+/g, '_');
+            const value = row[idx];
+            if (value == null || value === '') return null;
+            if (/(player|name|team|country|venue|format|opposition|against|season|date|match_id)/.test(lower)) return null;
+            const numeric = !isNaN(parseFloat(String(value)));
+            const matchedIdx = priority.findIndex(token => lower.includes(token));
+            if (!numeric && matchedIdx < 0) return null;
+            const score = (matchedIdx >= 0 ? 100 - matchedIdx : 10) + (numeric ? 25 : 0);
+            return {
+                label: humanizeColumn(col),
+                value: formatValue(value, col),
+                score,
+            };
+        })
+        .filter(Boolean)
+        .sort((left, right) => right.score - left.score)
+        .slice(0, 4);
+}
+
+function buildInsightStrip(columns, rows, displayHint) {
+    if (!rows || rows.length === 0) return '';
+    const metrics = pickInsightMetrics(columns, rows[0], displayHint);
+    if (metrics.length === 0) return '';
+    return `<div class="answer-insight-strip">${metrics.map(metric => `
+        <div class="answer-insight-card">
+            <div class="answer-insight-kicker">${escapeHtml(metric.label)}</div>
+            <div class="answer-insight-value">${escapeHtml(String(metric.value))}</div>
+        </div>
+    `).join('')}</div>`;
+}
+
+function inferResultMeta(columns, rows, displayHint) {
+    const statType = (displayHint && displayHint.stat_type) || detectStatType(columns);
+    const subject = rows.length === 1 ? findResultSubject(columns, rows[0]) : findResultSubject(columns, rows[0]);
+    const normalizedType = statType === 'allround' ? 'All-round' : statType === 'general' ? 'Result' : humanizeColumn(statType);
+    return {
+        kicker: rows.length > 1 ? 'Ranked results' : `${normalizedType} snapshot`,
+        title: subject || (rows.length > 1 ? 'Structured query results' : 'Query result'),
+        detail: rows.length > 1
+            ? `${rows.length} rows returned from the current query.`
+            : `${columns.length} fields returned from the current query.`,
+    };
+}
+
+function buildStructuredResultCard(data) {
+    const columns = data.columns || [];
+    const rows = data.rows || [];
+    if (columns.length === 0 || rows.length === 0) return '';
+
+    const cardId = `result-card-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const datasetId = registerResultDataset(columns, rows);
+    const sqlId = data.sql ? `sql-${Date.now()}-${Math.random().toString(36).slice(2, 7)}` : null;
+    const meta = inferResultMeta(columns, rows, data.display_hint);
+    const body = buildDataDisplay(columns, rows, data.display_hint);
+
+    return `
+        <div class="answer-result-card" id="${cardId}">
+            <div class="answer-result-head">
+                <div class="answer-result-copy">
+                    <div class="answer-result-kicker">${escapeHtml(meta.kicker)}</div>
+                    <div class="answer-result-title">${escapeHtml(meta.title)}</div>
+                    <div class="answer-result-detail">${escapeHtml(meta.detail)}</div>
+                </div>
+                <div class="answer-result-actions">
+                    ${sqlId ? `<button type="button" class="answer-result-btn" onclick="toggleSqlBlock('${sqlId}', this)">SQL</button>` : ''}
+                    <button type="button" class="answer-result-btn" onclick="downloadResultDataset('${datasetId}')">CSV</button>
+                    <button type="button" class="answer-result-btn" onclick="toggleResultCard('${cardId}', this)">Open</button>
+                </div>
+            </div>
+            <div class="answer-result-body">
+                ${body}
+                ${sqlId ? `<div class="sql-block answer-inline-sql" id="${sqlId}">${escapeHtml(data.sql)}</div>` : ''}
+            </div>
+        </div>
+    `;
+}
+
 function appendAssistantDOM(data, isError) {
     const container = document.getElementById('chat-container');
     const div = document.createElement('div');
@@ -3998,20 +4298,22 @@ function appendAssistantDOM(data, isError) {
 
     // Smart data display — route by display_hint / sections
     const isScorecard = data.sections && data.sections.type === 'scorecard' && data.sections.innings && data.sections.innings.length > 0;
+    const hasStructuredRows = data.columns && data.columns.length > 0 && data.rows && data.rows.length > 0;
     if (isScorecard) {
         html += renderScorecard(data.sections);
-    } else if (data.columns && data.columns.length > 0 && data.rows && data.rows.length > 0) {
+    } else if (hasStructuredRows) {
         // If display_hint was scorecard but sections failed to build, don't show ugly stat cards
         const hintFormat = data.display_hint && data.display_hint.format;
         if (hintFormat === 'scorecard') {
             // Scorecard failed — just show the answer text, no raw data cards
         } else {
-            html += buildDataDisplay(data.columns, data.rows, data.display_hint);
+            html += buildInsightStrip(data.columns, data.rows, data.display_hint);
+            html += buildStructuredResultCard(data);
         }
     }
 
     // SQL toggle
-    if (data.sql) {
+    if (data.sql && (!hasStructuredRows || isScorecard)) {
         const sqlId = 'sql-' + Date.now();
         html += `<div class="sql-toggle" onclick="toggleSql('${sqlId}')">&#9654; Show SQL query</div>`;
         html += `<div class="sql-block" id="${sqlId}">${escapeHtml(data.sql)}</div>`;
@@ -4029,7 +4331,7 @@ function appendAssistantDOM(data, isError) {
     }
 
     // Model indicator (subtle)
-    if (data.model_used && data.model_used !== 'gpt-4.1') {
+    if (shouldRenderModelTag(data.model_used)) {
         html += `<div class="model-tag">${escapeHtml(data.model_used)}</div>`;
     }
 
