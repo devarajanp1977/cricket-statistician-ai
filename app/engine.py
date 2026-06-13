@@ -266,7 +266,7 @@ Schema:
 {DB_SCHEMA}
 """
 
-class Engine:
+class CricketQueryEngine:
     """The main query processing engine for the Cricket Statistician AI."""
 
     def __init__(self, db_path=DB_PATH):
