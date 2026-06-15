@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cricket Statistician AI</title>
     <script>
-        window.APP_BASE_PATH = '__APP_BASE_PATH__';
+        window.APP_BASE_PATH = '';
         function withBasePath(path) {
             const base = (window.APP_BASE_PATH || '').replace(/\/+$/, '');
             const normalized = path.startsWith('/') ? path : `/${path}`;
@@ -86,7 +86,7 @@
             white-space: nowrap;
         }
 
-        #new-chat-btn:hover { background: #15803d; }
+        #new-chat-btn:hover { background: #146347; }
 
         .sidebar-search {
             padding: 10px 16px;
@@ -405,7 +405,7 @@
         }
         .stat-table td.highlight-val {
             font-weight: 700;
-            color: #1e40af;
+            color: #146347;
         }
 
         /* ── Premium Data Table ────────────────────────────────── */
@@ -442,7 +442,7 @@
             background: #eef3fb;
             padding: 2px 10px;
             border-radius: 999px;
-            border: 1px solid #c7d6ec;
+            border: 1px solid #c2d6b3;
             font-family: var(--app-font-mono);
         }
 
@@ -760,7 +760,7 @@
             white-space: nowrap;
         }
 
-        #send-btn:hover { background: #15803d; }
+        #send-btn:hover { background: #146347; }
         #send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
         /* ── Welcome / examples ──────────────────────────────────── */
@@ -828,7 +828,7 @@
             background: #16a34a; color: #fff; border-color: #16a34a;
         }
 
-        .modal-btn.primary:hover { background: #15803d; }
+        .modal-btn.primary:hover { background: #146347; }
 
         .modal-btn.danger {
             background: #fff; color: #dc2626; border-color: #fca5a5;
@@ -1175,21 +1175,21 @@
         }
 
         :root {
-            --app-bg: #eef1f5;
-            --app-surface: #ffffff;
-            --app-surface-soft: #fafbfc;
-            --app-surface-muted: #f4f6f9;
-            --app-line: #e2e7ee;
-            --app-line-soft: #eef1f5;
+            --app-bg: #fffdf7;
+            --app-surface: #fffdf7;
+            --app-surface-soft: #f8f6ee;
+            --app-surface-muted: #eef5ea;
+            --app-line: #dce5d8;
+            --app-line-soft: #eaf0e6;
             --app-ink-0: #0b1b2b;
             --app-ink-1: #243447;
             --app-ink-2: #4d6178;
             --app-ink-3: #7b8fa6;
-            --app-primary: #1a4fa0;
-            --app-primary-deep: #103573;
-            --app-gold: #8d6913;
-            --app-magenta: #6f2f93;
-            --app-shadow: 0 1px 0 rgba(11, 27, 43, 0.04), 0 10px 24px rgba(11, 27, 43, 0.05);
+            --app-primary: #146347;
+            --app-primary-deep: #0b3f31;
+            --app-gold: #9a7418;
+            --app-magenta: #9f3d35;
+            --app-shadow: 0 1px 0 rgba(11, 27, 43, 0.04), 0 1px 2px rgba(20, 99, 71, 0.06);
             --app-font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --app-font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --app-font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
@@ -1199,8 +1199,9 @@
             font-family: var(--app-font-body);
             color: var(--app-ink-0);
             background:
-                radial-gradient(circle at top left, rgba(26, 79, 160, 0.08), transparent 28%),
-                linear-gradient(180deg, #f7f9fc 0%, var(--app-bg) 100%);
+                linear-gradient(90deg, rgba(20, 99, 71, 0.055) 1px, transparent 1px),
+                linear-gradient(180deg, #fffdf7 0%, #edf3ea 100%);
+            background-size: 44px 100%, auto;
             scrollbar-gutter: stable both-edges;
         }
 
@@ -1240,7 +1241,7 @@
             justify-content: center;
             background: linear-gradient(180deg, var(--app-primary) 0%, var(--app-primary-deep) 100%);
             color: #fff;
-            box-shadow: 0 10px 24px rgba(26, 79, 160, 0.22);
+            box-shadow: 0 10px 24px rgba(20, 99, 71, 0.22);
             overflow: hidden;
             flex-shrink: 0;
         }
@@ -1277,7 +1278,7 @@
             background: var(--app-primary);
             font-weight: 700;
             text-align: left;
-            box-shadow: 0 10px 24px rgba(26, 79, 160, 0.18);
+            box-shadow: 0 10px 24px rgba(20, 99, 71, 0.18);
         }
 
         #new-chat-btn:hover { background: var(--app-primary-deep); }
@@ -1313,7 +1314,7 @@
         .filter-pill.active {
             background: #eef3fb;
             color: var(--app-primary);
-            border-color: #c7d6ec;
+            border-color: #c2d6b3;
         }
 
         #session-list {
@@ -1427,6 +1428,11 @@
 
         #sidebar-toggle:hover { background: var(--app-surface-muted); }
 
+        /* Sidebar is permanently visible on desktop, so the toggle is redundant there. */
+        @media (min-width: 981px) {
+            #sidebar-toggle { display: none; }
+        }
+
         #header-kicker {
             font-family: var(--app-font-mono);
             font-size: 9px;
@@ -1467,12 +1473,59 @@
             border: 1px solid var(--app-line);
             border-radius: 10px;
             color: var(--app-ink-2);
-            cursor: pointer;
+            cursor: text;
             font-size: 13px;
             text-align: left;
+            position: relative;
         }
 
-        #command-bar:hover { border-color: #c7d6ec; }
+        #command-bar:hover { border-color: #c2d6b3; }
+
+        /* Inline chat search (top command bar) */
+        #command-search {
+            flex: 1;
+            min-width: 0;
+            border: none;
+            background: transparent;
+            outline: none;
+            font-family: var(--app-font-body);
+            font-size: 13px;
+            color: var(--app-ink-1);
+        }
+        #command-search::placeholder { color: var(--app-ink-3); }
+        #command-results {
+            display: none;
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            width: 100%;
+            background: var(--app-surface);
+            border: 1px solid var(--app-line);
+            border-radius: 10px;
+            box-shadow: 0 12px 32px rgba(11, 27, 43, 0.12);
+            max-height: 340px;
+            overflow-y: auto;
+            padding: 6px;
+            z-index: 60;
+        }
+        #command-results.open { display: block; }
+        .command-result {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 2px;
+            width: 100%;
+            padding: 9px 11px;
+            border-radius: 8px;
+            border: 1px solid transparent;
+            background: none;
+            cursor: pointer;
+            text-align: left;
+        }
+        .command-result:hover { background: var(--app-surface-muted); border-color: var(--app-line); }
+        .command-result-title { font-size: 13px; font-weight: 600; color: var(--app-ink-0); }
+        .command-result-meta { font-size: 10.5px; color: var(--app-ink-3); font-family: var(--app-font-mono); }
+        .command-empty { padding: 14px; text-align: center; color: var(--app-ink-3); font-size: 12.5px; }
 
         #command-bar-kbd {
             margin-left: auto;
@@ -1510,7 +1563,7 @@
         #llm-status.all-ok {
             background: #eef3fb;
             color: var(--app-primary);
-            border-color: #c7d6ec;
+            border-color: #c2d6b3;
         }
 
         #llm-status.partial {
@@ -1544,7 +1597,7 @@
             flex: 1;
             min-height: 0;
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 320px;
+            grid-template-columns: minmax(0, 1fr);
         }
 
         #chat-thread {
@@ -1595,7 +1648,7 @@
             background: var(--app-surface);
             padding: 24px 22px;
             overflow-y: auto;
-            display: flex;
+            display: none;
             flex-direction: column;
             gap: 18px;
         }
@@ -1699,7 +1752,7 @@
             padding: 12px;
             border-radius: 12px;
             background: var(--app-ink-0);
-            color: #c7d6ec;
+            color: #c2d6b3;
             font-family: var(--app-font-mono);
             font-size: 11px;
             line-height: 1.55;
@@ -1752,7 +1805,7 @@
             height: 8px;
             border-radius: 999px;
             background: var(--app-primary);
-            box-shadow: 0 0 0 4px rgba(26, 79, 160, 0.14);
+            box-shadow: 0 0 0 4px rgba(20, 99, 71, 0.14);
         }
 
         .message.user .label {
@@ -1811,9 +1864,9 @@
         }
 
         .stat-section-header.general {
-            background: linear-gradient(135deg, rgba(26, 79, 160, 0.12) 0%, rgba(43, 138, 217, 0.08) 100%);
+            background: linear-gradient(135deg, rgba(20, 99, 71, 0.12) 0%, rgba(43, 138, 217, 0.08) 100%);
             color: var(--app-primary);
-            border-color: rgba(26, 79, 160, 0.18);
+            border-color: rgba(20, 99, 71, 0.18);
         }
 
         .stat-table td.primary-val,
@@ -1888,7 +1941,7 @@
             flex-direction: column;
             gap: 12px;
             background: var(--app-surface);
-            border: 1px solid #c7d6ec;
+            border: 1px solid #c2d6b3;
             border-radius: 18px;
             padding: 14px;
             box-shadow: 0 8px 32px rgba(11, 27, 43, 0.06), 0 1px 0 rgba(11, 27, 43, 0.04);
@@ -2268,7 +2321,7 @@
             height: 6px;
             border-radius: 999px;
             background: var(--app-primary);
-            box-shadow: 0 0 0 3px rgba(26, 79, 160, 0.18);
+            box-shadow: 0 0 0 3px rgba(20, 99, 71, 0.18);
             margin-top: 5px;
             flex-shrink: 0;
         }
@@ -3044,7 +3097,7 @@
         }
 
         .sc-inn-header {
-            background: linear-gradient(90deg, rgba(26, 79, 160, 0.08) 0%, rgba(26, 79, 160, 0.03) 100%);
+            background: linear-gradient(90deg, rgba(20, 99, 71, 0.08) 0%, rgba(20, 99, 71, 0.03) 100%);
             padding: 12px 20px;
             display: flex;
             justify-content: space-between;
@@ -3216,6 +3269,18 @@
             color: var(--app-ink-1);
             margin-right: 4px;
         }
+        /* Desktop: align the brand top with the topbar "Ask" (~18px), with equal
+           spacing above the brand and between the brand and the New chat button.
+           Placed last so it wins over the earlier .sidebar-header rules on desktop;
+           scoped to desktop so mobile's safe-area rules are untouched. */
+        @media (min-width: 981px) {
+            .sidebar-header {
+                padding: 18px 16px;
+                gap: 18px;
+                min-height: auto;
+                justify-content: flex-start;
+            }
+        }
     </style>
 </head>
 <body>
@@ -3237,7 +3302,7 @@
             </div>
             <div>
                 <h2>Cricket Statistician</h2>
-                <div class="brand-subtitle">Test / ODI / IPL intelligence</div>
+                <div class="brand-subtitle">Cricket intelligence</div>
             </div>
         </div>
         <button id="new-chat-btn" onclick="createNewSession()">
@@ -3247,7 +3312,7 @@
         </button>
     </div>
     <nav class="sidebar-nav">
-        <a class="sidebar-nav-item active" data-nav="chat" href="__APP_BASE_PATH__/">
+        <a class="sidebar-nav-item active" data-nav="chat" href="/">
             <span class="sidebar-nav-icon">💬</span>
             <span class="sidebar-nav-label">Ask</span>
         </a>
@@ -3256,11 +3321,11 @@
             <span class="sidebar-nav-label">History</span>
             <span class="sidebar-nav-count" id="nav-history-count">0</span>
         </a>
-        <a class="sidebar-nav-item" data-nav="data" href="__APP_BASE_PATH__/data">
+        <a class="sidebar-nav-item" data-nav="data" href="/data">
             <span class="sidebar-nav-icon">📊</span>
             <span class="sidebar-nav-label">Data Management</span>
         </a>
-        <a class="sidebar-nav-item" data-nav="kb" href="__APP_BASE_PATH__/knowledge">
+        <a class="sidebar-nav-item" data-nav="kb" href="/knowledge">
             <span class="sidebar-nav-icon">🧠</span>
             <span class="sidebar-nav-label">Knowledge Base</span>
             <span class="sidebar-nav-count" id="nav-kb-count">0</span>
@@ -3313,16 +3378,17 @@
                 <span class="crumb-item current" id="header-session-title">New chat</span>
             </div>
         </div>
-        <button id="command-bar" type="button" onclick="focusComposer()">
+        <div id="command-bar">
             <svg class="command-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.7"></circle>
                 <path d="M16 16l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
             </svg>
-            <span id="command-bar-text">Ask a cricket question · or ⌘K</span>
+            <input id="command-search" type="text" autocomplete="off" placeholder="Search your chats · ⌘K" oninput="renderCommandResults(this.value)" onfocus="renderCommandResults(this.value)" />
             <span id="command-bar-kbd">⌘K</span>
-        </button>
+            <div id="command-results"></div>
+        </div>
         <div class="topbar-right">
-            <span id="header-live-meta" class="header-live-meta">GPT-4.1 + DuckDB · <strong>● Live</strong></span>
+            <span id="header-live-meta" class="header-live-meta"><strong>● Live</strong></span>
             <button type="button" class="header-link" onclick="shareCurrentView()">Share</button>
             <span id="db-stats" class="sr-only"></span>
             <span id="llm-status" class="sr-only" title="Checking..."></span>
@@ -3468,6 +3534,69 @@ function switchSession(id) {
     focusComposer(true);
 }
 
+// ── Inline chat search (top command bar / Cmd-K) ───────────────────────
+function renderCommandResults(query) {
+    const box = document.getElementById('command-results');
+    if (!box) return;
+    const q = (query || '').trim().toLowerCase();
+    if (!q) { box.classList.remove('open'); box.innerHTML = ''; return; }
+    const matches = loadSessions()
+        .filter(s => !s.archived)
+        .filter(s => {
+            if ((s.title || '').toLowerCase().includes(q)) return true;
+            return (s.messages || []).some(m => {
+                // User turns store text in m.content; assistant turns store the
+                // result (answer/summary/sql) in m.data.
+                if (m.content && m.content.toLowerCase().includes(q)) return true;
+                const d = m.data;
+                if (d) {
+                    const blob = [d.answer, d.context_summary, d.sql]
+                        .filter(Boolean).join(' ').toLowerCase();
+                    if (blob.includes(q)) return true;
+                }
+                return false;
+            });
+        })
+        .slice(0, 12);
+    if (!matches.length) {
+        box.innerHTML = '<div class="command-empty">No matching chats</div>';
+    } else {
+        box.innerHTML = matches.map(s => {
+            const c = (s.messages || []).filter(m => m.role === 'user').length;
+            return '<button type="button" class="command-result" onmousedown="event.preventDefault()" onclick="chooseCommandResult(\'' + s.id + '\')">'
+                + '<span class="command-result-title">' + escapeHtml(s.title || 'Untitled chat') + '</span>'
+                + '<span class="command-result-meta">' + c + ' question' + (c !== 1 ? 's' : '') + ' &middot; ' + formatRelativeTime(s.updatedAt) + '</span>'
+                + '</button>';
+        }).join('');
+    }
+    box.classList.add('open');
+}
+
+function chooseCommandResult(id) {
+    const input = document.getElementById('command-search');
+    if (input) input.value = '';
+    const box = document.getElementById('command-results');
+    if (box) { box.classList.remove('open'); box.innerHTML = ''; }
+    switchSession(id);
+}
+
+document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        const input = document.getElementById('command-search');
+        if (input) input.focus();
+    } else if (e.key === 'Escape') {
+        const box = document.getElementById('command-results');
+        if (box) box.classList.remove('open');
+    }
+});
+
+document.addEventListener('click', (e) => {
+    const bar = document.getElementById('command-bar');
+    const box = document.getElementById('command-results');
+    if (box && bar && !bar.contains(e.target)) box.classList.remove('open');
+});
+
 function getActiveSession() {
     const sessions = loadSessions();
     const id = getActiveSessionId();
@@ -3610,9 +3739,7 @@ function renderHeaderChrome() {
     }
 
     if (commandEl) {
-        commandEl.textContent = latestQuestion
-            ? summarizeText(`Follow up on: ${latestQuestion}`, 72)
-            : 'Ask a cricket question · or ⌘K';
+        commandEl.textContent = 'Search your chats · ⌘K';
     }
 }
 
@@ -4887,7 +5014,7 @@ function formatDismissal(isOut, type, bowler, fielder) {
 // ═══════════════════════════════════════════════════════════════════
 
 const CHART_COLORS = [
-    '#16a34a', '#2563eb', '#d97706', '#dc2626', '#7c3aed',
+    '#16a34a', '#146347', '#d97706', '#dc2626', '#7c3aed',
     '#0891b2', '#be185d', '#65a30d', '#ea580c', '#6366f1'
 ];
 
@@ -5421,15 +5548,15 @@ function refreshLlmStatus() {
             if (avail === total) {
                 el.textContent = `LLM: ${calls} calls`;
                 el.className = 'topbar-pill all-ok';
-                if (meta) meta.innerHTML = 'GPT-4.1 + DuckDB · <strong>● Live</strong>';
+                if (meta) meta.innerHTML = '<strong>● Live</strong>';
             } else if (avail > 0) {
                 el.textContent = `LLM: ${calls} calls (${avail}/${total} models)`;
                 el.className = 'topbar-pill partial';
-                if (meta) meta.innerHTML = `GPT-4.1 + DuckDB · <strong>${avail}/${total} live</strong>`;
+                if (meta) meta.innerHTML = `<strong>${avail}/${total} live</strong>`;
             } else {
                 el.textContent = `LLM: ${calls} calls (all blocked)`;
                 el.className = 'topbar-pill none-ok';
-                if (meta) meta.innerHTML = 'GPT-4.1 + DuckDB · <strong>Blocked</strong>';
+                if (meta) meta.innerHTML = '<strong>Blocked</strong>';
             }
             const details = data.models.map(m => {
                 let line = m.model + ': ';
@@ -5452,7 +5579,7 @@ function refreshLlmStatus() {
             el.textContent = 'LLM: ?';
             el.className = 'topbar-pill';
             el.title = 'Could not fetch status';
-            if (meta) meta.innerHTML = 'GPT-4.1 + DuckDB · <strong>Unknown</strong>';
+            if (meta) meta.innerHTML = '<strong>Unknown</strong>';
         });
 }
 refreshLlmStatus();

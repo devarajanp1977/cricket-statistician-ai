@@ -279,6 +279,20 @@
       "category": "discovered",
       "active": false,
       "source": "CSK are 55 for 1 in 6 overs in IPL. What will be their final score?"
+    },
+    {
+      "id": 45,
+      "text": "Sachin Tendulkar, the all-time leader with 49 ODI centuries, is not on this list as most of his career predates the Cricsheet ball-by-ball data which starts around 2003.",
+      "category": "discovered",
+      "active": false,
+      "source": "Show the top 10 ODI century-makers"
+    },
+    {
+      "id": 46,
+      "text": "Jim Laker's 10/53 and 9/37 both feature in the top 5 innings figures of all time and were taken in the same Test match in 1956.",
+      "category": "discovered",
+      "active": false,
+      "source": "Best bowling figures in a single Test innings"
     }
   ]
 }

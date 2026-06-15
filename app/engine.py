@@ -1,7 +1,7 @@
 """Cricket Statistician AI — query engine.
 
 Translates natural-language cricket questions into DuckDB SQL,
-executes them, and formats results via GPT-4.1 through GitHub Models API.
+executes them, and formats results via a provider-configured LLM.
 """
 
 import os
@@ -13,6 +13,8 @@ import urllib.request
 import duckdb
 from dotenv import load_dotenv
 from openai import OpenAI
+
+from . import intent_router, match_predictor, providers
 
 load_dotenv()
 
@@ -28,18 +30,27 @@ FALLBACK_MODELS = [
     os.getenv("GITHUB_MODEL_4", "gpt-5-mini"),
 ]
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+SARVAM_MODEL = os.getenv("SARVAM_MODEL", "sarvam-105b")
+SARVAM_FALLBACK_MODELS = [
+    os.getenv("SARVAM_MODEL_2", "sarvam-30b"),
+]
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
 
 
 import time
 import re as _re
 
 
-# Track rate-limited models: {model_name: timestamp_when_limit_expires}
-_rate_limit_until: dict[str, float] = {}
-# Track remaining calls per model from API response headers
-_rate_limit_remaining: dict[str, dict] = {}
-# Track total LLM calls made since server start
-_llm_call_count: int = 0
+def _clean_model_chain(primary_model: str, fallback_models: list[str] | None = None) -> list[str]:
+    models: list[str] = []
+    seen: set[str] = set()
+    for candidate in [primary_model, *(fallback_models or [])]:
+        normalized = (candidate or "").strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        models.append(normalized)
+    return models
 
 
 def _load_knowledge_facts() -> str:
@@ -306,6 +317,9 @@ TABLE deliveries:
     match_id, innings_num, over_num, ball_num, batter, bowler, non_striker,
     runs_batter, runs_extras, runs_total, non_boundary,
     extras_wides, extras_noballs, extras_byes, extras_legbyes
+    -- batter, bowler, non_striker contain player DISPLAY NAMES (e.g. 'V Kohli'), NOT IDs.
+    -- Join them to players.name — NEVER to players.cricsheet_id (always 0 rows).
+    -- Already display-ready: "most runs/sixes" queries can GROUP BY batter directly.
 
 TABLE wickets:
     match_id, innings_num, over_num, ball_num, player_out, kind, fielder1, fielder2
@@ -368,6 +382,7 @@ Cricsheet rules:
         GROUP BY m.match_id, i.batting_team, i.target_runs)
     SELECT COUNT(*) as total_chases, SUM(CASE WHEN chase_total >= target_runs THEN 1 ELSE 0 END) as successful,
            ROUND(100.0 * SUM(CASE WHEN chase_total >= target_runs THEN 1 ELSE 0 END) / COUNT(*), 1) as win_pct FROM second_innings
+11. match_type values are Test, ODI, T20, IT20, ODM, MDM — there is NO 'T20I' value, and match_type alone does not separate international from domestic cricket. For T20 INTERNATIONALS ("T20Is") filter match_type = 'T20' AND m.team_type = 'international'. Domestic/franchise T20 (IPL, BBL, etc.) uses match_type = 'T20' with the event_name filter from rule 6. ODIs use match_type = 'ODI'; Tests use match_type = 'Test'.
 """
 
 SQL_RULES_TEAM_NAMES_COMPACT = """
@@ -386,6 +401,7 @@ Output-shaping rules:
 2. Career or record queries for a single player must return exactly ONE row of aggregated totals. Always GROUP BY the player name across all their innings. Never return per-innings rows for a career summary.
 3. For all-rounders, include both batting columns (runs, batting_avg, strike_rate, fifties, centuries, highest_score) AND bowling columns (wickets, bowling_avg, economy, bowling_sr, runs_conceded) in a single row.
 4. Use clear aliases such as batting_avg, strike_rate, highest_score, bowling_avg, economy, bowling_sr, runs_conceded.
+5. Select only the columns the question asks for. For a ranked list such as top run-scorers or top wicket-takers, return just the player name and the single ranking metric (e.g. bowler and wicket count) — do not add economy, averages, strike rate, match counts, or other columns unless the question explicitly asks for them.
 """
 
 SQL_COMPACT_SECTIONS = {
@@ -835,22 +851,96 @@ RESPONSE FORMAT — CRITICAL:
 class CricketQueryEngine:
     """Translates natural-language queries to SQL via GPT-4.1, executes, and narrates."""
 
-    def __init__(self, model: str = DEFAULT_MODEL, db_path: str = DB_PATH):
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        db_path: str = DB_PATH,
+        *,
+        provider: str = "copilot",
+        display_name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        fallback_models: list[str] | None = None,
+    ):
+        self.provider = provider
+        self.display_name = display_name or provider.title()
         self.model = model
-        self.model_chain = [model] + FALLBACK_MODELS
+        self.model_chain = _clean_model_chain(model, fallback_models if fallback_models is not None else FALLBACK_MODELS)
         self.db_path = db_path
         self.cache_path = CACHE_PATH
+        self.base_url = base_url or "https://models.inference.ai.azure.com"
+        self.api_key = GITHUB_TOKEN if api_key is None else api_key
         self.client = OpenAI(
-            base_url="https://models.inference.ai.azure.com",
-            api_key=GITHUB_TOKEN,
+            base_url=self.base_url,
+            api_key=self.api_key,
         )
         self._last_model_used: str | None = None
+        self._rate_limit_until: dict[str, float] = {}
+        self._rate_limit_remaining: dict[str, dict] = {}
+        self._llm_call_count = 0
         self._espn_team_name_cache: dict[str, str | None] = {}
         self._espn_test_summary_cache: dict[str, dict[str, dict] | None] = {}
         self._init_cache()
         self._wasp_tables: dict[str, dict[tuple[int, int], float]] = {}
         self._wasp_meta: dict[str, dict] = {}
         self._build_wasp_tables()
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+    def get_rate_limit_status(self) -> dict:
+        if not self.is_configured():
+            return {
+                "provider": self.provider,
+                "display_name": self.display_name,
+                "configured": False,
+                "models": [
+                    {"model": model, "available": False, "wait_seconds": 0}
+                    for model in self.model_chain
+                ],
+                "available_count": 0,
+                "total_count": len(self.model_chain),
+                "llm_calls": self._llm_call_count,
+            }
+
+        now = time.time()
+        result = []
+        total_remaining = 0
+        total_limit = 0
+        has_header_data = False
+
+        for model in self.model_chain:
+            blocked_until = self._rate_limit_until.get(model, 0)
+            is_blocked = now < blocked_until
+            wait_seconds = max(0, int(blocked_until - now)) if is_blocked else 0
+            info = {
+                "model": model,
+                "available": not is_blocked,
+                "wait_seconds": wait_seconds,
+            }
+            header_info = self._rate_limit_remaining.get(model)
+            if header_info and header_info.get("remaining", -1) >= 0:
+                has_header_data = True
+                info["remaining"] = header_info["remaining"]
+                info["limit"] = header_info.get("limit", -1)
+                if not is_blocked:
+                    total_remaining += header_info["remaining"]
+                    total_limit += header_info.get("limit", 0)
+            result.append(info)
+
+        response = {
+            "provider": self.provider,
+            "display_name": self.display_name,
+            "configured": True,
+            "models": result,
+            "available_count": sum(1 for item in result if item["available"]),
+            "total_count": len(result),
+            "llm_calls": self._llm_call_count,
+        }
+        if has_header_data:
+            response["total_remaining"] = total_remaining
+            response["total_limit"] = total_limit
+        return response
 
     # ── WASP pre-computation ────────────────────────────────────────────
 
@@ -993,13 +1083,12 @@ class CricketQueryEngine:
 
     def _call_llm(self, messages: list[dict], temperature: float = 0.1) -> str:
         """Call LLM walking the model chain, skipping rate-limited models."""
-        global _rate_limit_until
         now = time.time()
         last_error = None
 
         for model in self.model_chain:
             # Skip models we already know are rate-limited
-            if model in _rate_limit_until and now < _rate_limit_until[model]:
+            if model in self._rate_limit_until and now < self._rate_limit_until[model]:
                 continue
 
             try:
@@ -1010,16 +1099,15 @@ class CricketQueryEngine:
                 )
                 response = raw_response.parse()
                 self._last_model_used = model
-                # Increment global LLM call counter
-                global _llm_call_count
-                _llm_call_count += 1
+                self._llm_call_count += 1
+                self._record_llm_usage(model, getattr(response, "usage", None))
                 # Capture rate limit headers from raw HTTP response
                 try:
                     hdrs = raw_response.headers
                     remaining = hdrs.get("x-ratelimit-remaining-requests")
                     limit = hdrs.get("x-ratelimit-limit-requests")
                     if remaining is not None:
-                        _rate_limit_remaining[model] = {
+                        self._rate_limit_remaining[model] = {
                             "remaining": int(remaining),
                             "limit": int(limit) if limit else -1,
                             "reset": hdrs.get("x-ratelimit-reset-requests", ""),
@@ -1033,7 +1121,7 @@ class CricketQueryEngine:
                     # Parse wait time from error if available (e.g. "Please wait 75494 seconds")
                     wait_match = _re.search(r'wait\s+(\d+)\s+seconds', err_str)
                     wait_secs = int(wait_match.group(1)) if wait_match else 86400
-                    _rate_limit_until[model] = now + wait_secs
+                    self._rate_limit_until[model] = now + wait_secs
                     print(f"Rate limited on {model} (wait {wait_secs}s), trying next model...")
                     last_error = e
                     continue
@@ -1102,33 +1190,43 @@ class CricketQueryEngine:
         },
     ]
 
-    def _call_llm_with_tools(self, messages: list[dict], temperature: float = 0.1) -> object:
-        """Call LLM with function-calling tools. Returns the full message object
-        (which may contain a tool_calls list or just content)."""
-        global _rate_limit_until, _llm_call_count
+    def _call_llm_with_tools(self, messages: list[dict], temperature: float = 0.1,
+                             use_tools: bool = True) -> object:
+        """Call LLM, optionally offering the WASP function-calling tools.
+
+        Returns the full message object (which may contain a tool_calls list or
+        just content). When use_tools is False the tools are not offered at all,
+        so the model cannot spuriously trigger a prediction tool on a plain
+        statistical question.
+        """
         now = time.time()
         last_error = None
 
         for model in self.model_chain:
-            if model in _rate_limit_until and now < _rate_limit_until[model]:
+            if model in self._rate_limit_until and now < self._rate_limit_until[model]:
                 continue
             try:
+                create_kwargs = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                }
+                if use_tools:
+                    create_kwargs["tools"] = self._WASP_TOOLS
+                    create_kwargs["tool_choice"] = "auto"
                 raw_response = self.client.chat.completions.with_raw_response.create(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    tools=self._WASP_TOOLS,
-                    tool_choice="auto",
+                    **create_kwargs
                 )
                 response = raw_response.parse()
                 self._last_model_used = model
-                _llm_call_count += 1
+                self._llm_call_count += 1
+                self._record_llm_usage(model, getattr(response, "usage", None))
                 try:
                     hdrs = raw_response.headers
                     remaining = hdrs.get("x-ratelimit-remaining-requests")
                     limit = hdrs.get("x-ratelimit-limit-requests")
                     if remaining is not None:
-                        _rate_limit_remaining[model] = {
+                        self._rate_limit_remaining[model] = {
                             "remaining": int(remaining),
                             "limit": int(limit) if limit else -1,
                             "reset": hdrs.get("x-ratelimit-reset-requests", ""),
@@ -1141,7 +1239,7 @@ class CricketQueryEngine:
                 if "429" in err_str or "RateLimitReached" in err_str or "rate" in err_str.lower():
                     wait_match = _re.search(r'wait\s+(\d+)\s+seconds', err_str)
                     wait_secs = int(wait_match.group(1)) if wait_match else 86400
-                    _rate_limit_until[model] = now + wait_secs
+                    self._rate_limit_until[model] = now + wait_secs
                     last_error = e
                     continue
                 raise
@@ -1561,9 +1659,111 @@ class CricketQueryEngine:
                 VALUES ('data_version', '1')
                 ON CONFLICT (key) DO NOTHING
             """)
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS llm_usage (
+                    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    provider TEXT,
+                    model TEXT,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    cost_usd DOUBLE
+                )
+            """)
             con.close()
         except Exception:
             pass  # Cache is optional; don't fail startup
+
+    def _record_llm_usage(self, model: str, usage: object) -> None:
+        """Record token usage and estimated cost for one LLM call (best-effort).
+
+        Failures here must never affect the query — usage tracking is optional.
+        """
+        if usage is None:
+            return
+        try:
+            prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+            price = providers.model_pricing(model)
+            if price is None:
+                # Unknown model: record tokens with NULL cost rather than guess.
+                cost = None
+            else:
+                cost = (prompt_tokens * price[0] + completion_tokens * price[1]) / 1_000_000
+            con = self._get_cache_connection()
+            try:
+                con.execute(
+                    "INSERT INTO llm_usage "
+                    "(provider, model, prompt_tokens, completion_tokens, cost_usd) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    [self.provider, model, prompt_tokens, completion_tokens, cost],
+                )
+                con.execute(
+                    "DELETE FROM llm_usage WHERE ts < CURRENT_TIMESTAMP - INTERVAL 90 DAY"
+                )
+            finally:
+                con.close()
+        except Exception:
+            pass
+
+    def get_usage_stats(self) -> dict:
+        """Aggregate LLM token usage and estimated cost for the usage monitor."""
+        empty = {
+            "total_calls": 0, "total_prompt_tokens": 0, "total_completion_tokens": 0,
+            "total_cost_usd": 0.0, "today_calls": 0, "today_cost_usd": 0.0,
+            "last30_calls": 0, "last30_cost_usd": 0.0, "by_model": [], "by_day": [],
+        }
+        try:
+            con = self._get_cache_connection()
+            try:
+                totals = con.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(prompt_tokens), 0), "
+                    "COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(cost_usd), 0) "
+                    "FROM llm_usage"
+                ).fetchone()
+                today = con.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM llm_usage "
+                    "WHERE ts >= CURRENT_DATE"
+                ).fetchone()
+                last30 = con.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(cost_usd), 0) FROM llm_usage "
+                    "WHERE ts >= CURRENT_DATE - INTERVAL 30 DAY"
+                ).fetchone()
+                by_model = con.execute(
+                    "SELECT model, COUNT(*), COALESCE(SUM(prompt_tokens), 0), "
+                    "COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(cost_usd), 0) "
+                    "FROM llm_usage GROUP BY model ORDER BY 5 DESC"
+                ).fetchall()
+                by_day = con.execute(
+                    "SELECT CAST(ts AS DATE), COUNT(*), COALESCE(SUM(cost_usd), 0) "
+                    "FROM llm_usage WHERE ts >= CURRENT_DATE - INTERVAL 30 DAY "
+                    "GROUP BY 1 ORDER BY 1"
+                ).fetchall()
+            finally:
+                con.close()
+            return {
+                "total_calls": int(totals[0]),
+                "total_prompt_tokens": int(totals[1]),
+                "total_completion_tokens": int(totals[2]),
+                "total_cost_usd": round(float(totals[3]), 4),
+                "today_calls": int(today[0]),
+                "today_cost_usd": round(float(today[1]), 4),
+                "last30_calls": int(last30[0]),
+                "last30_cost_usd": round(float(last30[1]), 4),
+                "by_model": [
+                    {
+                        "model": m, "calls": int(c),
+                        "prompt_tokens": int(pt), "completion_tokens": int(ct),
+                        "cost_usd": round(float(cost), 4),
+                    }
+                    for (m, c, pt, ct, cost) in by_model
+                ],
+                "by_day": [
+                    {"date": str(d), "calls": int(c), "cost_usd": round(float(cost), 4)}
+                    for (d, c, cost) in by_day
+                ],
+            }
+        except Exception as exc:
+            return {**empty, "error": str(exc)}
 
     @staticmethod
     def _history_signature(history: list[dict] | None = None) -> str:
@@ -1762,13 +1962,20 @@ class CricketQueryEngine:
     # Words that should NOT be treated as player name tokens
     _STOP_WORDS = frozenset(
         "a an the and or in on at of for to is was by has how many much"
+        " show tell give display fetch find can could would should please"
         " who what which when where do does did not no vs versus against"
         " best worst top most highest lowest all time career test tests"
         " odi odis t20 t20i t20is ipl runs wickets batting bowling average"
         " strike rate economy centuries fifties sixes fours matches innings"
         " played scored taken hat trick maiden overs balls compare comparison"
         " between performance stats statistics record records total list"
-        " player team series world cup first last ever".split()
+        " player team series world cup first last ever"
+        # Common verbs / predictive words that collide with player first names
+        # (e.g. "Will" Jacks). Skipping them as player tokens stops false matches
+        # on questions like "who will win" — distinctive surnames still resolve.
+        " will won win wins winner beat beats beating next upcoming going gonna"
+        " match predict prediction predicted forecast chance chances probability"
+        " odds likely".split()
     )
 
     def _resolve_players(self, question: str) -> list[dict]:
@@ -1996,6 +2203,121 @@ class CricketQueryEngine:
                 })
         return result
 
+    @staticmethod
+    def _extract_player_name_from_result(columns: list[str], rows: list) -> str | None:
+        """Extract a single player name from a prior result set when one is clearly implied."""
+        if not columns or not rows:
+            return None
+
+        preferred_columns = {
+            "player_name",
+            "player",
+            "name",
+            "batsman",
+            "bowler",
+            "batter",
+            "player_of_match",
+        }
+        candidate_indexes: list[int] = []
+        for idx, column in enumerate(columns):
+            normalized = str(column).lower().replace(' ', '_').replace('"', '')
+            if normalized in preferred_columns or normalized.endswith("_name"):
+                candidate_indexes.append(idx)
+
+        for idx in candidate_indexes:
+            values = {
+                str(row[idx]).strip()
+                for row in rows
+                if idx < len(row) and row[idx] not in (None, "")
+            }
+            if len(values) == 1:
+                return next(iter(values))
+        return None
+
+    def _resolve_player_identity(self, player_name: str) -> dict | None:
+        """Map a player label back to canonical/full and Cricsheet names."""
+        if not player_name:
+            return None
+
+        con = self._get_connection()
+        try:
+            try:
+                row = con.execute(
+                    """
+                        SELECT DISTINCT pa.canonical_name, pa.cricsheet_name, pa.team, pm.kaggle_player_id
+                        FROM player_aliases pa
+                        LEFT JOIN player_map pm ON pa.cricsheet_name = pm.cricsheet_name
+                        WHERE lower(pa.canonical_name) = lower(?)
+                           OR lower(pa.cricsheet_name) = lower(?)
+                           OR lower(pa.alias) = lower(?)
+                        ORDER BY
+                            CASE pa.alias_type
+                                WHEN 'full_name' THEN 1
+                                WHEN 'cricsheet' THEN 2
+                                WHEN 'nickname' THEN 3
+                                ELSE 4
+                            END,
+                            pa.canonical_name
+                        LIMIT 1
+                    """,
+                    [player_name, player_name, player_name],
+                ).fetchone()
+            except Exception:
+                row = None
+            if row:
+                return {
+                    "canonical_name": row[0] or player_name,
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+
+            try:
+                row = con.execute(
+                    """
+                        SELECT kp.player_name, COALESCE(pm.cricsheet_name, ''), '', kp.player_id
+                        FROM kaggle_players kp
+                        LEFT JOIN player_map pm ON kp.player_id = pm.kaggle_player_id
+                        WHERE lower(kp.player_name) = lower(?)
+                        LIMIT 1
+                    """,
+                    [player_name],
+                ).fetchone()
+            except Exception:
+                row = None
+            if row:
+                return {
+                    "canonical_name": row[0] or player_name,
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+
+            try:
+                row = con.execute(
+                    """
+                        SELECT p.name, p.name, '', pm.kaggle_player_id
+                        FROM players p
+                        LEFT JOIN player_map pm ON p.name = pm.cricsheet_name
+                        WHERE lower(p.name) = lower(?)
+                        LIMIT 1
+                    """,
+                    [player_name],
+                ).fetchone()
+            except Exception:
+                row = None
+            if row:
+                return {
+                    "canonical_name": row[0] or player_name,
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+        finally:
+            con.close()
+
+        return None
+
     def _build_disambiguation_response(self, question: str, token: str, candidates: list[dict]) -> dict:
         """Build a disambiguation response when multiple players match."""
         # Enrich candidates with player_profiles data (playing_role, country, headshot)
@@ -2127,6 +2449,27 @@ class CricketQueryEngine:
             return "kaggle"
         return "full"
 
+    # Phrases that signal a WASP score / win-probability prediction question.
+    _KW_PREDICTION = frozenset({
+        "predict", "forecast", "projected score", "project the score",
+        "likely score", "expected final score", "par score",
+        "win probability", "winning probability", "probability of winning",
+        "chance of winning", "chances of winning", "chance of a win",
+        "chances of a win", "odds of winning", "what will the score",
+        "what will their score", "final score be", "successfully chase",
+        "can they chase", "chase the target",
+    })
+
+    @classmethod
+    def _is_prediction_question(cls, question: str) -> bool:
+        """True when the question wants a WASP prediction, not a DB lookup.
+
+        Gates whether the WASP tools are offered to the LLM at all — plain
+        statistical questions never see the tools, so they cannot misfire.
+        """
+        q = (question or "").lower()
+        return any(kw in q for kw in cls._KW_PREDICTION)
+
     @staticmethod
     def _prune_schema_for_intent(intent: str) -> str:
         """Return DB_SCHEMA with irrelevant source tables removed."""
@@ -2233,10 +2576,37 @@ class CricketQueryEngine:
 
     _MALE_QUERY_PATTERN = _re.compile(r"\b(?:men|men's|mens|male|boys?)\b", _re.IGNORECASE)
     _FEMALE_QUERY_PATTERN = _re.compile(r"\b(?:women|women's|womens|female|girls?)\b", _re.IGNORECASE)
+    # Strong third-person-singular pronouns: when present they unambiguously
+    # refer to the prior turn's subject (a person), so a previous-player
+    # context inherit is appropriate even alongside aggregate keywords.
+    _STRONG_FOLLOWUP_PRONOUN_PATTERN = _re.compile(
+        r"\b(?:he|him|his|she|her|hers)\b",
+        _re.IGNORECASE,
+    )
+    # Weak/anaphoric references: these are ambiguous and only count as a
+    # follow-up when the surrounding prompt is not a standalone aggregate
+    # ("who has the most …", "top N …", "compare …") query.
+    _WEAK_FOLLOWUP_PRONOUN_PATTERN = _re.compile(
+        r"\b(?:they|them|their|theirs|this|that|these|those|it|its|same|previous|above|earlier|former|latter)\b",
+        _re.IGNORECASE,
+    )
+    # Fresh-subject keywords mark a query as standalone (leaderboard,
+    # comparison, aggregation, listing). Weak pronouns inside such prompts
+    # are collective ("their innings"), not anaphoric — do not inherit a
+    # prior player.
+    _FRESH_SUBJECT_PATTERN = _re.compile(
+        r"\b(?:who|which|list|rank|ranking|leaderboard|leader|leaders|"
+        r"compare|compared|comparison|versus|vs|"
+        r"top|most|max|maximum|highest|lowest|least|best|worst|"
+        r"total|count|all)\b",
+        _re.IGNORECASE,
+    )
+    # Retained for backwards compatibility — superset of strong+weak.
     _CONTEXT_DEPENDENT_QUERY_PATTERN = _re.compile(
         r"\b(?:this|that|these|those|it|he|his|her|hers|they|them|their|same|previous|above|earlier|former|latter)\b",
         _re.IGNORECASE,
     )
+    _PLAYER_NAME_PLACEHOLDER_PATTERN = _re.compile(r"'?\s*<PLAYER NAME>\s*'?", _re.IGNORECASE)
     _MATCH_REFERENCE_PATTERN = _re.compile(
         r"\b(?:this|that|it)\b|\b(?:this|that)\s+(?:match|game|scorecard|odi|test|t20(?:i)?)\b",
         _re.IGNORECASE,
@@ -2248,7 +2618,32 @@ class CricketQueryEngine:
     _LATEST_MATCH_PATTERN = _re.compile(r"\b(?:latest|most recent|recent|last)\b", _re.IGNORECASE)
     _SCORECARD_PATTERN = _re.compile(r"\bscorecard\b", _re.IGNORECASE)
     _CATCHES_PATTERN = _re.compile(r"\bcatch(?:es|er)?\b", _re.IGNORECASE)
+    _CENTURY_MAKER_PATTERN = _re.compile(
+        r"\b(?:centur(?:y|ies)(?:\s*|-)?makers?|hundreds?)\b",
+        _re.IGNORECASE,
+    )
+    _SIXES_PATTERN = _re.compile(r"\bsixes?\b", _re.IGNORECASE)
+    _FIRST_BALLS_OF_INNINGS_PATTERN = _re.compile(
+        r"\bfirst\s+(\d+)\s+balls?\b.*\binnings\b",
+        _re.IGNORECASE,
+    )
     _LEADER_PATTERN = _re.compile(r"\b(?:most|max(?:imum)?|top|highest)\b", _re.IGNORECASE)
+    _TOP_COUNT_WORDS = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    _TOP_COUNT_PATTERN = _re.compile(
+        r"\btop\s+(?:(\d+)|(one|two|three|four|five|six|seven|eight|nine|ten))\b",
+        _re.IGNORECASE,
+    )
     _IPL_PATTERN = _re.compile(r"\b(?:ipl|indian premier league)\b", _re.IGNORECASE)
     _TEAM_ENTITY_PATTERN = _re.compile(
         r"\b(?:csk|mi|rcb|kkr|pbks|dc|gt|lsg|srh|rr|"
@@ -2506,11 +2901,177 @@ class CricketQueryEngine:
         return sql
 
     @classmethod
+    def _should_apply_previous_player_context(cls, question: str) -> bool:
+        """Decide whether to inherit the prior turn's player into this prompt.
+
+        Rules (structural, not query-specific):
+          * No pronoun → never inherit (prompt is fully self-contained).
+          * Strong pronoun (he/him/his/she/her/hers) → always inherit; these
+            are unambiguous third-person-singular references to a person.
+          * Weak pronoun only (their, this, that, it, same, previous, …) →
+            inherit only when the prompt is NOT a standalone aggregate /
+            leaderboard / comparison query. "their innings" inside "who has
+            the most sixes …" is collective, not anaphoric, and must not
+            drag the previous player in.
+        """
+        if not question:
+            return False
+
+        has_strong = bool(cls._STRONG_FOLLOWUP_PRONOUN_PATTERN.search(question))
+        has_weak = bool(cls._WEAK_FOLLOWUP_PRONOUN_PATTERN.search(question))
+        if not (has_strong or has_weak):
+            return False
+
+        if has_strong:
+            return True
+
+        # Weak pronoun only — veto if the prompt is a standalone aggregate.
+        if cls._FRESH_SUBJECT_PATTERN.search(question):
+            return False
+        return True
+
+    @classmethod
     def _should_bypass_cache(cls, question: str, history: list[dict] | None = None) -> bool:
         """Avoid question-only cache hits for follow-ups that depend on prior context."""
         if not history or not question:
             return False
-        return bool(cls._CONTEXT_DEPENDENT_QUERY_PATTERN.search(question))
+        return cls._should_apply_previous_player_context(question)
+
+    @staticmethod
+    def _build_player_filter_block(player_context: dict) -> str:
+        """Build a [PLAYER FILTER] annotation with exact SQL WHERE clauses and context."""
+        parts = [f'[PLAYER FILTER for "{player_context["canonical_name"]}"']
+        kaggle_player_id = player_context.get("kaggle_player_id")
+        cricsheet_name = player_context.get("cricsheet_name", "")
+        if kaggle_player_id:
+            parts.append(f"  Kaggle filter: batsman = {kaggle_player_id}")
+        elif player_context.get("canonical_name"):
+            parts.append(f"  Kaggle filter: player_name ILIKE '%{player_context['canonical_name']}%'")
+        if cricsheet_name:
+            parts.append(f"  Cricsheet filter: batter = '{cricsheet_name}'")
+        team = (player_context.get("team") or "").strip()
+        if team:
+            parts.append(
+                f"  Context only: primary team = {team} (disambiguation only; do not add a team filter unless the user explicitly asks for it)"
+            )
+        parts.append("]")
+        return "\n".join(parts)
+
+    def _lookup_player_context(self, player_name: str) -> dict | None:
+        """Resolve canonical, Cricsheet, and Kaggle identifiers for a known player name."""
+        if not player_name:
+            return None
+
+        con = self._get_connection()
+        try:
+            row = con.execute(
+                """
+                    SELECT DISTINCT pa.canonical_name, pa.cricsheet_name, pa.team, pm.kaggle_player_id
+                    FROM player_aliases pa
+                    LEFT JOIN player_map pm ON pa.cricsheet_name = pm.cricsheet_name
+                    WHERE lower(pa.canonical_name) = lower(?) OR lower(pa.cricsheet_name) = lower(?)
+                    ORDER BY CASE WHEN lower(pa.canonical_name) = lower(?) THEN 0 ELSE 1 END
+                    LIMIT 1
+                """,
+                [player_name, player_name, player_name],
+            ).fetchone()
+            if row:
+                return {
+                    "canonical_name": row[0],
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+
+            row = con.execute(
+                """
+                    SELECT kp.player_name, pm.cricsheet_name, '' AS team, kp.player_id
+                    FROM kaggle_players kp
+                    LEFT JOIN player_map pm ON kp.player_id = pm.kaggle_player_id
+                    WHERE lower(kp.player_name) = lower(?)
+                    LIMIT 1
+                """,
+                [player_name],
+            ).fetchone()
+            if row:
+                return {
+                    "canonical_name": row[0],
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+
+            row = con.execute(
+                """
+                    SELECT p.name, p.name, '' AS team, pm.kaggle_player_id
+                    FROM players p
+                    LEFT JOIN player_map pm ON p.name = pm.cricsheet_name
+                    WHERE lower(p.name) = lower(?)
+                    LIMIT 1
+                """,
+                [player_name],
+            ).fetchone()
+            if row:
+                return {
+                    "canonical_name": row[0],
+                    "cricsheet_name": row[1] or "",
+                    "team": row[2] or "",
+                    "kaggle_player_id": row[3],
+                }
+        except Exception:
+            return None
+        finally:
+            con.close()
+
+        return None
+
+    def _resolve_previous_player_context(self, history: list[dict] | None = None) -> dict | None:
+        """Recover the last single-player context from prior turns."""
+        if not history:
+            return None
+
+        for turn in reversed(history):
+            prev_sql = (turn.get("sql") or "").strip()
+            if prev_sql:
+                try:
+                    columns, rows = self._execute_sql(prev_sql)
+                except Exception:
+                    columns, rows = [], []
+
+                player_name = self._extract_player_name_from_result(columns, rows)
+                if player_name:
+                    player_context = self._lookup_player_context(player_name)
+                    if player_context:
+                        return player_context
+
+            context_summary = turn.get("context_summary") or ""
+            match = _re.search(r"player_name\s*=\s*([^,\n]+)", context_summary, _re.IGNORECASE)
+            if match:
+                player_context = self._lookup_player_context(match.group(1).strip())
+                if player_context:
+                    return player_context
+
+            matches = self._resolve_players(turn.get("question") or "")
+            if len(matches) == 1 and len(matches[0].get("candidates", [])) == 1:
+                return matches[0]["candidates"][0]
+
+        return None
+
+    def _replace_unresolved_player_placeholders(self, sql: str, player_context: dict | None) -> str:
+        """Replace LLM placeholders like <PLAYER NAME> with the resolved follow-up player."""
+        if not sql or not player_context or not self._PLAYER_NAME_PLACEHOLDER_PATTERN.search(sql):
+            return sql
+
+        if self._detect_data_source(sql) == "cricsheet":
+            replacement = player_context.get("cricsheet_name") or player_context.get("canonical_name")
+        else:
+            replacement = player_context.get("canonical_name") or player_context.get("cricsheet_name")
+
+        if not replacement:
+            return sql
+
+        escaped_replacement = str(replacement).replace("'", "''")
+        return self._PLAYER_NAME_PLACEHOLDER_PATTERN.sub(f"'{escaped_replacement}'", sql)
 
     def _resolve_previous_match_context(self, history: list[dict] | None = None) -> dict | None:
         """Recover the last match-focused result from history by re-running prior SQL."""
@@ -2860,6 +3421,369 @@ class CricketQueryEngine:
             if previous_question and self._COMPARISON_QUERY_PATTERN.search(previous_question):
                 return True
         return False
+
+    @classmethod
+    def _resolve_requested_top_count(cls, question: str) -> int | None:
+        """Extract a requested top-N count from prompts like 'top 2' or 'top two'."""
+        if not question:
+            return None
+
+        match = cls._TOP_COUNT_PATTERN.search(question)
+        if not match:
+            return None
+
+        numeric_count = match.group(1)
+        if numeric_count:
+            try:
+                return int(numeric_count)
+            except ValueError:
+                return None
+
+        return cls._TOP_COUNT_WORDS.get((match.group(2) or "").lower())
+
+    def _detect_batting_leader_comparison_request(self, question: str,
+                                                  history: list[dict] | None = None) -> dict | None:
+        """Recognize top-N batting leader comparison questions that are safer to answer deterministically."""
+        if not question:
+            return None
+        if not self._COMPARISON_QUERY_PATTERN.search(question):
+            return None
+        if not self._CENTURY_MAKER_PATTERN.search(question):
+            return None
+
+        top_count = self._resolve_requested_top_count(question)
+        if top_count is None or top_count < 2 or top_count > 10:
+            return None
+
+        sql_filter, competition_label = self._resolve_event_filter_from_context(question, history)
+        if not sql_filter or competition_label in {"all formats", "Test"}:
+            return None
+
+        return {
+            "top_count": top_count,
+            "sql_filter": sql_filter,
+            "competition_label": competition_label,
+            "stat_label": "centuries",
+        }
+
+    def _build_batting_leader_comparison_response(self, question: str,
+                                                  history: list[dict] | None = None) -> dict | None:
+        """Compare the top-N batting century leaders directly from Cricsheet innings aggregates."""
+        request = self._detect_batting_leader_comparison_request(question, history)
+        if not request:
+            return None
+
+        sql = f"""
+WITH bat_innings AS (
+    SELECT
+        d.batter AS player_name,
+        d.match_id,
+        d.innings_num,
+        SUM(d.runs_batter) AS innings_runs,
+        COUNT(*) FILTER (WHERE COALESCE(d.extras_wides, 0) = 0) AS balls_faced,
+        MAX(
+            CASE
+                WHEN w.player_out IS NOT NULL
+                 AND w.kind NOT IN ('retired hurt', 'retired out') THEN 1
+                ELSE 0
+            END
+        ) AS dismissed
+    FROM deliveries d
+    JOIN matches m ON d.match_id = m.match_id
+    LEFT JOIN wickets w
+        ON d.match_id = w.match_id
+       AND d.innings_num = w.innings_num
+       AND d.over_num = w.over_num
+       AND d.ball_num = w.ball_num
+       AND w.player_out = d.batter
+    WHERE {request['sql_filter']}
+    GROUP BY d.batter, d.match_id, d.innings_num
+),
+bat_agg AS (
+    SELECT
+        player_name,
+        COUNT(DISTINCT match_id) AS matches,
+        COUNT(*) AS innings,
+        SUM(innings_runs) AS total_runs,
+        MAX(innings_runs) AS highest_score,
+        COUNT(*) FILTER (WHERE innings_runs >= 100) AS centuries,
+        COUNT(*) FILTER (WHERE innings_runs >= 50 AND innings_runs < 100) AS fifties,
+        ROUND(SUM(innings_runs) * 1.0 / NULLIF(SUM(dismissed), 0), 2) AS batting_avg,
+        ROUND(SUM(innings_runs) * 100.0 / NULLIF(SUM(balls_faced), 0), 2) AS strike_rate
+    FROM bat_innings
+    GROUP BY player_name
+),
+ranked AS (
+    SELECT
+        ROW_NUMBER() OVER (
+            ORDER BY centuries DESC, total_runs DESC, batting_avg DESC NULLS LAST, player_name
+        ) AS rank,
+        player_name,
+        centuries,
+        matches,
+        innings,
+        total_runs,
+        batting_avg,
+        strike_rate,
+        highest_score,
+        fifties
+    FROM bat_agg
+    WHERE centuries > 0
+)
+SELECT
+    rank,
+    player_name,
+    centuries,
+    matches,
+    innings,
+    total_runs,
+    batting_avg,
+    strike_rate,
+    highest_score,
+    fifties
+FROM ranked
+WHERE rank <= {request['top_count']}
+ORDER BY rank
+""".strip()
+
+        columns, rows = self._execute_sql(sql)
+        row_lists = [list(row) for row in rows]
+        if not row_lists:
+            return {
+                "question": question,
+                "sql": sql,
+                "columns": columns,
+                "rows": [],
+                "answer": f"No {request['competition_label']} century-maker comparison data was found in the database.",
+                "error": None,
+                "chart_config": None,
+                "context_summary": f"No {request['competition_label']} century-maker comparison data",
+                "new_fact": None,
+                "display_hint": {"format": "table", "stat_type": "batting"},
+                "sections": None,
+                "model_used": "deterministic-batting-leader-comparison",
+            }
+
+        index = {column: idx for idx, column in enumerate(columns)}
+
+        def _int_value(row: list, column: str) -> int:
+            value = row[index[column]]
+            return int(value or 0)
+
+        def _pluralized_centuries(value: int) -> str:
+            return "century" if value == 1 else "centuries"
+
+        def _format_int(value: int) -> str:
+            return f"{value:,}"
+
+        if len(row_lists) == 1:
+            only_row = row_lists[0]
+            player_name = str(only_row[index["player_name"]])
+            centuries = _int_value(only_row, "centuries")
+            answer = (
+                f"Only {player_name} appears in the available {request['competition_label']} century-maker results "
+                f"with {_format_int(centuries)} {_pluralized_centuries(centuries)}, so there isn't a second player to compare."
+            )
+            context_summary = (
+                f"Top {request['competition_label']} century-maker comparison: "
+                f"{player_name} with {centuries} {_pluralized_centuries(centuries)} via Cricsheet data"
+            )
+        else:
+            leader = row_lists[0]
+            challenger = row_lists[1]
+            leader_name = str(leader[index["player_name"]])
+            challenger_name = str(challenger[index["player_name"]])
+            leader_centuries = _int_value(leader, "centuries")
+            challenger_centuries = _int_value(challenger, "centuries")
+            leader_matches = _int_value(leader, "matches")
+            challenger_matches = _int_value(challenger, "matches")
+            leader_runs = _int_value(leader, "total_runs")
+            challenger_runs = _int_value(challenger, "total_runs")
+            gap = leader_centuries - challenger_centuries
+
+            answer = (
+                f"{leader_name} and {challenger_name} are the top two {request['competition_label']} century-makers in the available Cricsheet data. "
+                f"{leader_name} leads with {_format_int(leader_centuries)} {_pluralized_centuries(leader_centuries)} "
+                f"from {_format_int(leader_matches)} matches and {_format_int(leader_runs)} runs, while {challenger_name} has "
+                f"{_format_int(challenger_centuries)} {_pluralized_centuries(challenger_centuries)} from {_format_int(challenger_matches)} matches "
+                f"and {_format_int(challenger_runs)} runs. The gap between them is {_format_int(gap)} {_pluralized_centuries(gap)}."
+            )
+            context_summary = (
+                f"Top {request['top_count']} {request['competition_label']} century-makers comparison: "
+                f"{leader_name} {leader_centuries}, {challenger_name} {challenger_centuries} via Cricsheet data"
+            )
+
+        return {
+            "question": question,
+            "sql": sql,
+            "columns": columns,
+            "rows": row_lists,
+            "answer": answer,
+            "error": None,
+            "chart_config": None,
+            "context_summary": context_summary,
+            "new_fact": None,
+            "display_hint": {"format": "table", "stat_type": "batting"},
+            "sections": None,
+            "model_used": "deterministic-batting-leader-comparison",
+        }
+
+    def _detect_batting_start_sixes_leader_request(self, question: str,
+                                                   history: list[dict] | None = None) -> dict | None:
+        """Recognize leader queries about sixes hit in a batter's first N balls of an innings."""
+        if not question:
+            return None
+        if not self._SIXES_PATTERN.search(question):
+            return None
+        if not self._LEADER_PATTERN.search(question):
+            return None
+
+        window_match = self._FIRST_BALLS_OF_INNINGS_PATTERN.search(question)
+        if not window_match:
+            return None
+
+        sql_filter, competition_label = self._resolve_event_filter_from_context(question, history)
+        if not sql_filter:
+            return None
+
+        try:
+            ball_limit = int(window_match.group(1))
+        except (TypeError, ValueError):
+            return None
+        if ball_limit <= 0:
+            return None
+
+        top_count = self._resolve_requested_top_count(question) or 1
+        return {
+            "ball_limit": ball_limit,
+            "sql_filter": sql_filter,
+            "competition_label": competition_label,
+            "top_count": top_count,
+        }
+
+    def _build_batting_start_sixes_leader_response(self, question: str,
+                                                   history: list[dict] | None = None) -> dict | None:
+        """Resolve fast-start six-hitting leaders directly from Cricsheet batter-ball sequences."""
+        request = self._detect_batting_start_sixes_leader_request(question, history)
+        if not request:
+            return None
+
+        sql = f"""
+WITH batter_ball_sequence AS (
+    SELECT
+        d.batter AS player_name,
+        d.match_id,
+        d.innings_num,
+        SUM(CASE WHEN COALESCE(d.extras_wides, 0) = 0 THEN 1 ELSE 0 END) OVER (
+            PARTITION BY d.batter, d.match_id, d.innings_num
+            ORDER BY d.over_num, d.ball_num
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS batter_ball_num,
+        d.runs_batter,
+        COALESCE(d.non_boundary, FALSE) AS non_boundary
+    FROM deliveries d
+    JOIN matches m ON d.match_id = m.match_id
+    WHERE {request['sql_filter']}
+),
+innings_window AS (
+    SELECT
+        player_name,
+        match_id,
+        innings_num,
+        COUNT(*) FILTER (
+            WHERE batter_ball_num <= {request['ball_limit']}
+              AND runs_batter = 6
+              AND non_boundary = FALSE
+        ) AS sixes_in_window
+    FROM batter_ball_sequence
+    GROUP BY player_name, match_id, innings_num
+),
+batting_window_agg AS (
+    SELECT
+        player_name,
+        SUM(sixes_in_window) AS sixes,
+        COUNT(*) FILTER (WHERE sixes_in_window > 0) AS innings_with_sixes,
+        COUNT(DISTINCT match_id) FILTER (WHERE sixes_in_window > 0) AS matches_with_sixes
+    FROM innings_window
+    GROUP BY player_name
+),
+ranked AS (
+    SELECT
+        ROW_NUMBER() OVER (
+            ORDER BY sixes DESC, innings_with_sixes DESC, matches_with_sixes DESC, player_name
+        ) AS rank,
+        player_name,
+        sixes,
+        innings_with_sixes,
+        matches_with_sixes
+    FROM batting_window_agg
+    WHERE sixes > 0
+)
+SELECT rank, player_name, sixes, innings_with_sixes, matches_with_sixes
+FROM ranked
+WHERE rank <= {request['top_count']}
+ORDER BY rank
+""".strip()
+
+        columns, rows = self._execute_sql(sql)
+        row_lists = [list(row) for row in rows]
+        if not row_lists:
+            return {
+                "question": question,
+                "sql": sql,
+                "columns": columns,
+                "rows": [],
+                "answer": (
+                    f"No {request['competition_label']} batting records were found for sixes hit in the first "
+                    f"{request['ball_limit']} balls of an innings."
+                ),
+                "error": None,
+                "chart_config": None,
+                "context_summary": (
+                    f"No {request['competition_label']} first-{request['ball_limit']}-balls six-hitting data"
+                ),
+                "new_fact": None,
+                "display_hint": {"format": "table", "stat_type": "batting"},
+                "sections": None,
+                "model_used": "deterministic-batting-start-sixes-leader",
+            }
+
+        if request["top_count"] == 1:
+            leader = row_lists[0]
+            player_name = leader[1]
+            sixes = int(leader[2] or 0)
+            innings_with_sixes = int(leader[3] or 0)
+            matches_with_sixes = int(leader[4] or 0)
+            answer = (
+                f"{player_name} has hit the most sixes in the first {request['ball_limit']} balls of an innings in "
+                f"{request['competition_label']}, with {sixes} sixes across {innings_with_sixes} innings "
+                f"from {matches_with_sixes} matches."
+            )
+            display_hint = {"format": "stats", "stat_type": "batting"}
+        else:
+            leader = row_lists[0]
+            answer = (
+                f"The table shows the top {request['top_count']} {request['competition_label']} batters by sixes hit "
+                f"in the first {request['ball_limit']} balls of an innings. {leader[1]} currently leads with {int(leader[2] or 0)} sixes."
+            )
+            display_hint = {"format": "table", "stat_type": "batting"}
+
+        return {
+            "question": question,
+            "sql": sql,
+            "columns": columns,
+            "rows": row_lists,
+            "answer": answer,
+            "error": None,
+            "chart_config": None,
+            "context_summary": (
+                f"Top {request['competition_label']} six-hitter in first {request['ball_limit']} balls of an innings via Cricsheet data"
+            ),
+            "new_fact": None,
+            "display_hint": display_hint,
+            "sections": None,
+            "model_used": "deterministic-batting-start-sixes-leader",
+        }
 
     def _detect_team_phase_comparison_request(self, question: str,
                                               history: list[dict] | None = None) -> dict | None:
@@ -4502,12 +5426,264 @@ LIMIT 1
             "profile": None,
         }
 
+    def _build_player_career_summary_response(self, question: str, cricsheet_name: str,
+                                              canonical_name: str,
+                                              history: list[dict] | None = None) -> dict | None:
+        """Build a deterministic career summary for single-player batting or bowling questions."""
+        if not question or not cricsheet_name:
+            return None
+        if self._PLAYER_FIELDING_SUMMARY_PATTERN.search(question):
+            return None
+        if not (
+            self._PLAYER_BATTING_SUMMARY_PATTERN.search(question)
+            or self._PLAYER_BOWLING_SUMMARY_PATTERN.search(question)
+        ):
+            return None
+
+        date_filter, _ = self._resolve_relative_date_filter(question, history)
+        if date_filter:
+            return None
+
+        event_filter, _ = self._resolve_event_filter_from_context(question, history)
+        if not event_filter:
+            return None
+
+        return self._build_career_record_response(
+            question,
+            cricsheet_name,
+            canonical_name,
+            history=history,
+        )
+
+    def _lookup_player_role(self, cricsheet_name: str) -> str | None:
+        """Look up the player's primary role from player_profiles when available."""
+        if not cricsheet_name:
+            return None
+
+        con = self._get_connection()
+        try:
+            row = con.execute(
+                """
+                    SELECT pp.playing_role
+                    FROM players p
+                    JOIN player_profiles pp ON p.cricsheet_id = pp.cricsheet_id
+                    WHERE p.name = ?
+                    LIMIT 1
+                """,
+                [cricsheet_name],
+            ).fetchone()
+            if row and row[0]:
+                return str(row[0]).strip()
+        except Exception:
+            return None
+        finally:
+            con.close()
+
+        return None
+
+    @staticmethod
+    def _career_record_column_sets() -> tuple[set[str], set[str], set[str]]:
+        shared_columns = {"player_name", "matches"}
+        batting_columns = {
+            "batting_innings", "total_runs", "highest_score", "centuries", "fifties",
+            "balls_faced", "strike_rate", "batting_avg", "dismissals",
+        }
+        bowling_columns = {"wickets", "runs_conceded", "economy", "bowling_avg", "bowling_sr"}
+        return shared_columns, batting_columns, bowling_columns
+
+    def _choose_career_record_presentation(
+        self,
+        question: str,
+        columns: list[str],
+        row: list,
+        player_role: str | None,
+    ) -> str:
+        """Choose whether a career record should render as batting, bowling, or all-round."""
+        normalized_columns = [str(col).lower().replace(' ', '_').replace('"', '') for col in columns]
+        values = {normalized_columns[idx]: row[idx] for idx in range(min(len(normalized_columns), len(row)))}
+        _, batting_columns, bowling_columns = self._career_record_column_sets()
+
+        has_batting = any(col in batting_columns and values.get(col) not in (None, 0, 0.0, "") for col in normalized_columns)
+        has_bowling = any(col in bowling_columns and values.get(col) not in (None, 0, 0.0, "") for col in normalized_columns)
+
+        if not has_batting and has_bowling:
+            return "bowling"
+        if has_batting and not has_bowling:
+            return "batting"
+
+        if self._PLAYER_BOWLING_SUMMARY_PATTERN.search(question) and not self._PLAYER_BATTING_SUMMARY_PATTERN.search(question):
+            return "bowling"
+        if self._PLAYER_BATTING_SUMMARY_PATTERN.search(question) and not self._PLAYER_BOWLING_SUMMARY_PATTERN.search(question):
+            return "batting"
+
+        role_text = (player_role or "").lower()
+        if role_text:
+            if "allround" in role_text:
+                return "allround"
+            if "bowler" in role_text and "batter" not in role_text and "batter" not in role_text:
+                return "bowling"
+            if any(keyword in role_text for keyword in ("batter", "batting", "top order", "wicketkeeper")):
+                return "batting"
+
+        wickets = values.get("wickets")
+        runs_conceded = values.get("runs_conceded")
+        total_runs = values.get("total_runs")
+        batting_avg = values.get("batting_avg")
+
+        try:
+            wickets_value = float(wickets) if wickets is not None else 0.0
+        except (TypeError, ValueError):
+            wickets_value = 0.0
+        try:
+            runs_conceded_value = float(runs_conceded) if runs_conceded is not None else 0.0
+        except (TypeError, ValueError):
+            runs_conceded_value = 0.0
+        try:
+            total_runs_value = float(total_runs) if total_runs is not None else 0.0
+        except (TypeError, ValueError):
+            total_runs_value = 0.0
+        try:
+            batting_avg_value = float(batting_avg) if batting_avg is not None else 0.0
+        except (TypeError, ValueError):
+            batting_avg_value = 0.0
+
+        if has_batting and (wickets_value <= 10 or (total_runs_value >= 1000 and batting_avg_value >= 25 and wickets_value <= 25)):
+            return "batting"
+        if has_bowling and not has_batting:
+            return "bowling"
+        if has_batting and has_bowling and wickets_value > 10 and runs_conceded_value > 0:
+            return "allround"
+        return "batting" if has_batting else "allround"
+
+    def _project_career_record_row(
+        self,
+        columns: list[str],
+        row: list,
+        presentation_type: str,
+    ) -> tuple[list[str], list]:
+        """Drop irrelevant columns from a career-record row for cleaner presentation."""
+        shared_columns, batting_columns, bowling_columns = self._career_record_column_sets()
+        normalized_columns = [str(col).lower().replace(' ', '_').replace('"', '') for col in columns]
+
+        if presentation_type == "allround":
+            keep_indexes = list(range(len(columns)))
+        else:
+            allowed = shared_columns | (batting_columns if presentation_type == "batting" else bowling_columns)
+            keep_indexes = [idx for idx, name in enumerate(normalized_columns) if name in allowed]
+
+        projected_columns = [columns[idx] for idx in keep_indexes]
+        projected_row = [row[idx] for idx in keep_indexes]
+        return projected_columns, projected_row
+
+    @staticmethod
+    def _build_career_record_narrative(
+        question: str,
+        canonical_name: str,
+        event_label: str,
+        presentation_type: str,
+        columns: list[str],
+        row: list,
+    ) -> str:
+        """Build a concise narrative for deterministic career-record responses."""
+        normalized_columns = [str(col).lower().replace(' ', '_').replace('"', '') for col in columns]
+        values = {normalized_columns[idx]: row[idx] for idx in range(min(len(normalized_columns), len(row)))}
+        scope = f"{event_label} record" if event_label != "all formats" else "career record"
+
+        def _num(name: str) -> float | None:
+            value = values.get(name)
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def _int_text(name: str) -> str | None:
+            value = _num(name)
+            if value is None:
+                return None
+            return f"{int(round(value)):,}"
+
+        def _float_text(name: str) -> str | None:
+            value = _num(name)
+            if value is None:
+                return None
+            return f"{value:.2f}"
+
+        if presentation_type == "batting":
+            runs = _int_text("total_runs") or _int_text("runs")
+            matches = _int_text("matches")
+            innings = _int_text("batting_innings") or _int_text("innings")
+            batting_avg = _float_text("batting_avg")
+            strike_rate = _float_text("strike_rate")
+            centuries = _int_text("centuries")
+            fifties = _int_text("fifties")
+            highest_score = _int_text("highest_score")
+
+            lead = []
+            if runs:
+                lead.append(f"{runs} runs")
+            if matches:
+                lead.append(f"across {matches} matches")
+            if innings and innings != matches:
+                lead.append(f"from {innings} innings")
+            if batting_avg:
+                lead.append(f"at {batting_avg}")
+            summary = f"{canonical_name}'s {scope}: " + " ".join(lead) if lead else f"{canonical_name}'s {scope}."
+            extras = []
+            if centuries:
+                extras.append(f"{centuries} hundreds")
+            if fifties:
+                extras.append(f"{fifties} fifties")
+            if highest_score:
+                extras.append(f"highest score {highest_score}")
+            if strike_rate:
+                extras.append(f"strike rate {strike_rate}")
+            if extras:
+                summary += ". " + ", ".join(extras) + "."
+            else:
+                summary += "."
+            return summary
+
+        if presentation_type == "bowling":
+            wickets = _int_text("wickets")
+            matches = _int_text("matches")
+            economy = _float_text("economy")
+            bowling_avg = _float_text("bowling_avg")
+            bowling_sr = _float_text("bowling_sr")
+            runs_conceded = _int_text("runs_conceded")
+
+            lead = []
+            if wickets:
+                lead.append(f"{wickets} wickets")
+            if matches:
+                lead.append(f"across {matches} matches")
+            if bowling_avg:
+                lead.append(f"at {bowling_avg}")
+            summary = f"{canonical_name}'s {scope}: " + " ".join(lead) if lead else f"{canonical_name}'s {scope}."
+            extras = []
+            if economy:
+                extras.append(f"economy {economy}")
+            if bowling_sr:
+                extras.append(f"strike rate {bowling_sr}")
+            if runs_conceded:
+                extras.append(f"{runs_conceded} runs conceded")
+            if extras:
+                summary += ". " + ", ".join(extras) + "."
+            else:
+                summary += "."
+            return summary
+
+        player_name = values.get("player_name") or canonical_name
+        return f"{player_name}'s {scope} includes both batting and bowling contributions."
+
     def _build_career_record_response(self, question: str, cricsheet_name: str,
-                                      canonical_name: str) -> dict | None:
+                                      canonical_name: str,
+                                      history: list[dict] | None = None) -> dict | None:
         """Generate career record using known-good template SQL.
         Returns a complete response dict or None if execution fails.
         """
-        event_filter, event_label = self._detect_event_filter(question)
+        event_filter, event_label = self._resolve_event_filter_from_context(question, history)
         where_event = f"AND {event_filter}" if event_filter else ""
 
         sql = f"""
@@ -4587,27 +5763,24 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
             return None
 
         rows = [list(r) for r in result]
+        player_role = self._lookup_player_role(cricsheet_name)
+        presentation_type = self._choose_career_record_presentation(question, cols, rows[0], player_role)
+        cols, first_row = self._project_career_record_row(cols, rows[0], presentation_type)
+        rows = [first_row]
 
-        # Strip bowling columns if player didn't bowl (all bowling vals null)
-        bowl_col_names = {"wickets", "runs_conceded", "economy", "bowling_avg", "bowling_sr"}
-        bowl_indices = [i for i, c in enumerate(cols) if c in bowl_col_names]
-        if bowl_indices and all(rows[0][i] is None or rows[0][i] == 0 for i in bowl_indices):
-            keep = [i for i in range(len(cols)) if i not in set(bowl_indices)]
-            cols = [cols[i] for i in keep]
-            rows = [[row[i] for i in keep] for row in rows]
-
-        # Use template narrative
-        template_result = self._template_narrative(question, sql, cols, [tuple(rows[0])])
-
-        if template_result:
-            narrative, chart_config, context_summary, new_fact, display_hint = template_result
-        else:
-            # Fallback prose
-            narrative = f"Career record for {canonical_name} in {event_label}."
-            chart_config = None
-            context_summary = f"Career record for {canonical_name} ({event_label})"
-            new_fact = None
-            display_hint = {"format": "stats", "stat_type": "allround"}
+        narrative = self._build_career_record_narrative(
+            question,
+            canonical_name,
+            event_label,
+            presentation_type,
+            cols,
+            first_row,
+        )
+        chart_config = None
+        new_fact = None
+        display_hint = {"format": "stats", "stat_type": presentation_type}
+        summary_parts = [f"{col}={val}" for col, val in zip(cols, first_row) if val is not None][:4]
+        context_summary = "Result: " + ", ".join(summary_parts) + " (via Cricsheet data)"
 
         resp = {
             "question": question,
@@ -4632,12 +5805,92 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
         self._cache_store(question, resp)
         return resp
 
+    def _try_intent_router(self, question: str, history: list[dict] | None = None) -> dict | None:
+        """Answer a common leaderboard question from a SQL template — zero LLM calls.
+
+        Returns a full response dict when the question matches a known
+        leaderboard shape and the template SQL yields rows; otherwise None, so
+        ask() falls back to the LLM path.
+        """
+        routed = intent_router.route(question)
+        if routed is None:
+            return None
+        try:
+            columns, raw_rows = self._execute_sql(routed.sql)
+        except Exception:
+            return None
+        rows = [list(r) for r in raw_rows]
+        if not rows:
+            return None
+        resp = {
+            "question": question,
+            "sql": routed.sql,
+            "columns": columns,
+            "rows": rows,
+            "answer": intent_router.narrate(routed, rows),
+            "error": None,
+            "chart_config": None,
+            "context_summary": (
+                f"Leaderboard: most {routed.metric_label} in {routed.scope_label} "
+                "(intent router, no LLM call)"
+            ),
+            "new_fact": None,
+            "display_hint": {"format": "stats", "stat_type": "match"},
+            "sections": None,
+            "model_used": "intent-router",
+            "cached": False,
+            "candidates": None,
+            "original_question": None,
+            "profile": None,
+        }
+        self._cache_store(question, resp, history=history)
+        return resp
+
+    def _try_match_predictor(self, question: str, history: list[dict] | None = None) -> dict | None:
+        """Answer a 'predict team_a vs team_b' question from IPL Elo + recent form.
+
+        Returns a full response dict when the question matches a known IPL pair
+        with a predictive keyword; otherwise None so ask() falls back to the
+        LLM path. Zero LLM calls when it fires.
+        """
+        try:
+            data_version = self._get_cache_data_version()
+            resp = match_predictor.try_predict(
+                question, self.db_path, self.cache_path, data_version,
+            )
+        except Exception:
+            return None
+        if resp is None:
+            return None
+        self._cache_store(question, resp, history=history)
+        return resp
+
     def ask(self, question: str, history: list[dict] | None = None) -> dict:
         """Full pipeline: question → SQL → execute → narrative answer.
 
         Returns dict with keys: question, sql, columns, rows, answer, error, chart_config, context_summary
         """
         history = history or []
+        previous_player_context = None
+
+        # Step A: Cache lookup — repeats short-circuit before any other work.
+        bypass_cache = self._should_bypass_cache(question, history)
+        if not bypass_cache:
+            cached = self._cache_lookup(question, history=history)
+            if cached:
+                return cached
+
+        # Step B: Pattern-based fast paths (leaderboards, match predictions).
+        # Fire only on tight, conservative patterns; anything they do not match
+        # falls through to the player-aware pipeline below. This intentionally
+        # runs BEFORE player resolution so common English words like "will"
+        # cannot trip the resolver and short-circuit a clean predictor match.
+        routed_resp = self._try_intent_router(question, history=history)
+        if routed_resp is not None:
+            return routed_resp
+        predicted_resp = self._try_match_predictor(question, history=history)
+        if predicted_resp is not None:
+            return predicted_resp
 
         # Step 0: Resolve player names (zero LLM calls)
         player_matches = self._resolve_players(question)
@@ -4646,23 +5899,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
         resolved_names: set[str] = set()  # track already-resolved canonical names
 
         def _build_player_filter(c: dict) -> str:
-            """Build a [PLAYER FILTER] annotation with exact SQL WHERE clauses and context."""
-            parts = [f'[PLAYER FILTER for "{c["canonical_name"]}"']
-            kid = c.get("kaggle_player_id")
-            cs = c.get("cricsheet_name", "")
-            if kid:
-                parts.append(f"  Kaggle filter: batsman = {kid}")
-            elif c["canonical_name"]:
-                parts.append(f"  Kaggle filter: player_name ILIKE '%{c['canonical_name']}%'")
-            if cs:
-                parts.append(f"  Cricsheet filter: batter = '{cs}'")
-            team = (c.get("team") or "").strip()
-            if team:
-                parts.append(
-                    f"  Context only: primary team = {team} (disambiguation only; do not add a team filter unless the user explicitly asks for it)"
-                )
-            parts.append("]")
-            return "\n".join(parts)
+            return self._build_player_filter_block(c)
 
         for pm in player_matches:
             token = pm["query_token"]
@@ -4701,6 +5938,10 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
         augmented_question = question
         # Build canonical→cricsheet name map for post-processing SQL
         player_name_map: dict[str, str] = {}
+        if not player_context_parts and history and self._should_apply_previous_player_context(question):
+            previous_player_context = self._resolve_previous_player_context(history)
+            if previous_player_context:
+                player_context_parts.append(_build_player_filter(previous_player_context))
         if player_context_parts:
             augmented_question = question + "\n\n" + "\n".join(player_context_parts)
         # Collect all unambiguously resolved players for SQL name fixing
@@ -4712,6 +5953,11 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                 cs = c.get("cricsheet_name", "")
                 if cn and cs and cn != cs:
                     player_name_map[cn] = cs
+        if previous_player_context:
+            cn = previous_player_context.get("canonical_name", "")
+            cs = previous_player_context.get("cricsheet_name", "")
+            if cn and cs and cn != cs:
+                player_name_map[cn] = cs
 
         # Step 0b: Check if this is a "tell me about X" profile query
         profile_name = self._detect_profile_query(question)
@@ -4733,13 +5979,40 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
             if recent_batting_resp:
                 return recent_batting_resp
 
+            career_summary_resp = self._build_player_career_summary_response(
+                question,
+                c["cricsheet_name"],
+                c["canonical_name"],
+                history,
+            )
+            if career_summary_resp:
+                return career_summary_resp
+
         # Step 0b2: Career record template for "X's record/stats in IPL" queries
         if (self._RECORD_QUERY_PATTERN.search(question)
                 and len(player_matches) == 1
                 and len(player_matches[0]["candidates"]) == 1):
             c = player_matches[0]["candidates"][0]
             record_resp = self._build_career_record_response(
-                question, c["cricsheet_name"], c["canonical_name"]
+                question, c["cricsheet_name"], c["canonical_name"], history=history
+            )
+            if record_resp:
+                return record_resp
+        if previous_player_context:
+            career_summary_resp = self._build_player_career_summary_response(
+                question,
+                previous_player_context.get("cricsheet_name", ""),
+                previous_player_context.get("canonical_name", ""),
+                history,
+            )
+            if career_summary_resp:
+                return career_summary_resp
+        if self._RECORD_QUERY_PATTERN.search(question) and previous_player_context:
+            record_resp = self._build_career_record_response(
+                question,
+                previous_player_context.get("cricsheet_name", ""),
+                previous_player_context.get("canonical_name", ""),
+                history=history,
             )
             if record_resp:
                 return record_resp
@@ -4756,17 +6029,17 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
         if fielding_result is not None:
             return fielding_result
 
+        batting_leader_comparison_result = self._build_batting_leader_comparison_response(question, history)
+        if batting_leader_comparison_result is not None:
+            return batting_leader_comparison_result
+
+        batting_start_sixes_result = self._build_batting_start_sixes_leader_response(question, history)
+        if batting_start_sixes_result is not None:
+            return batting_start_sixes_result
+
         followup_result = self._build_match_followup_response(question, history)
         if followup_result is not None:
             return followup_result
-
-        bypass_cache = self._should_bypass_cache(question, history)
-
-        # Step 0c: Check query cache (zero LLM calls for repeated questions)
-        if not bypass_cache:
-            cached = self._cache_lookup(question, history=history)
-            if cached:
-                return cached
 
         result = {
             "question": question,
@@ -4801,7 +6074,11 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                         messages.append({"role": "assistant", "content": assistant_ctx.strip()})
             messages.append({"role": "user", "content": augmented_question})
 
-            llm_msg = self._call_llm_with_tools(messages, temperature=0.1)
+            llm_msg = self._call_llm_with_tools(
+                messages,
+                temperature=0.1,
+                use_tools=self._is_prediction_question(question),
+            )
 
             # Check if the LLM chose to call a WASP tool
             if llm_msg.tool_calls:
@@ -4823,6 +6100,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
             sql = self._apply_question_sql_guards(sql, augmented_question)
             if player_name_map:
                 sql = self._fix_player_names_in_sql(sql, player_name_map)
+            sql = self._replace_unresolved_player_placeholders(sql, previous_player_context)
             result["sql"] = sql
         except Exception as e:
             err_str = str(e)
@@ -4860,6 +6138,7 @@ FULL OUTER JOIN bowl_agg bw ON b.player_name = bw.player_name;"""
                 # Extract SQL if the retry response contains prose mixed with SQL
                 retry_sql = self._extract_sql(retry_sql)
                 retry_sql = self._apply_question_sql_guards(retry_sql, augmented_question)
+                retry_sql = self._replace_unresolved_player_placeholders(retry_sql, previous_player_context)
                 result["sql"] = retry_sql
                 columns, rows = self._execute_sql(retry_sql)
                 result["columns"] = columns
