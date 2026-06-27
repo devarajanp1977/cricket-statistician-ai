@@ -138,6 +138,12 @@ def parse_espn_data(data: dict) -> dict:
     country_ref = data.get("country")
     if isinstance(country_ref, dict):
         country = country_ref.get("name") or country_ref.get("abbreviation")
+    if not country:
+        # ESPN returns top-level `country` as an integer ref, not a dict, so the
+        # block above never fires. The country code lives on the flag, e.g.
+        # flag.alt = "IND". Use that as the reliable source.
+        flag_ref = data.get("flag") or {}
+        country = flag_ref.get("alt")
 
     headshot = data.get("headshot") or {}
     headshot_url = headshot.get("href")

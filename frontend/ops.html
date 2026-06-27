@@ -3,13 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cricket Statistician Operations</title>
+    <title>Operations - Cricket Statistician AI</title>
     <script>
-        window.APP_BASE_PATH = '__APP_BASE_PATH__';
         function withBasePath(path) {
-            const base = (window.APP_BASE_PATH || '').replace(/\/+$/, '');
-            const normalized = path.startsWith('/') ? path : `/${path}`;
-            return base ? `${base}${normalized}` : normalized;
+            return path.startsWith('/') ? path : `/${path}`;
         }
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -17,25 +14,25 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Sora:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-0: #ffffff;
-            --bg-1: #ffffff;
-            --bg-2: #fafbfc;
-            --bg-3: #f4f6f9;
-            --line: #e2e7ee;
-            --line-soft: #eef1f5;
+            --bg-0: #fffdf7;
+            --bg-1: #fffdf7;
+            --bg-2: #f8f6ee;
+            --bg-3: #eef5ea;
+            --line: #dce5d8;
+            --line-soft: #eaf0e6;
             --ink-0: #0b1b2b;
             --ink-1: #243447;
             --ink-2: #4d6178;
             --ink-3: #7b8fa6;
             --ink-4: #b6c2d1;
-            --primary: #1a4fa0;
-            --primary-deep: #103573;
+            --primary: #146347;
+            --primary-deep: #0b3f31;
             --cyan: #2b8ad9;
-            --magenta: #8b3fb8;
-            --gold: #b68a1e;
+            --magenta: #9f3d35;
+            --gold: #9a7418;
             --warn: #c28a0e;
-            --ok: #0f8a6e;
-            --shadow-card: 0 1px 0 rgba(11, 27, 43, 0.04), 0 1px 2px rgba(11, 27, 43, 0.04);
+            --ok: #146347;
+            --shadow-card: 0 1px 0 rgba(11, 27, 43, 0.04), 0 1px 2px rgba(20, 99, 71, 0.06);
             --font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             --font-mono: 'JetBrains Mono', 'Cascadia Code', monospace;
@@ -50,10 +47,17 @@
         }
 
         body {
-            background: #eef1f5;
+            background:
+                linear-gradient(90deg, rgba(20, 99, 71, 0.055) 1px, transparent 1px),
+                linear-gradient(180deg, #fffdf7 0%, #edf3ea 100%);
+            background-size: 44px 100%, auto;
             color: var(--ink-0);
             font-family: var(--font-body);
             -webkit-font-smoothing: antialiased;
+        }
+
+        body.mobile-sidebar-open {
+            overflow: hidden;
         }
 
         a, button, input, select, textarea {
@@ -66,9 +70,11 @@
         }
 
         #app-shell {
-            min-height: 100vh;
+            height: 100vh;
             display: flex;
             background: var(--bg-0);
+            position: relative;
+            overflow: hidden;
         }
 
         #sidebar {
@@ -78,6 +84,22 @@
             border-right: 1px solid var(--line);
             display: flex;
             flex-direction: column;
+            min-height: 0;
+            overflow-y: auto;
+            z-index: 30;
+        }
+
+        #sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(11, 27, 43, 0.38);
+            backdrop-filter: blur(3px);
+            z-index: 25;
+        }
+
+        #sidebar-backdrop.visible {
+            display: block;
         }
 
         .brand-bar {
@@ -90,17 +112,23 @@
         }
 
         .brand-mark {
-            width: 28px;
-            height: 28px;
-            border-radius: 8px;
-            background: linear-gradient(180deg, var(--primary) 0%, var(--primary-deep) 100%);
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            background: linear-gradient(180deg, #f8f6ee 0%, #e7f0df 100%);
+            border: 1px solid rgba(11, 27, 43, 0.08);
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #fff;
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 0.04em;
+            box-shadow: 0 12px 24px rgba(11, 27, 43, 0.08);
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+
+        .brand-mark svg {
+            width: 34px;
+            height: 34px;
+            display: block;
         }
 
         .brand-copy {
@@ -177,7 +205,7 @@
         }
 
         .sidebar-nav-item.active {
-            background: #eef3fb;
+            background: #edf6e8;
             color: var(--primary);
             font-weight: 600;
         }
@@ -339,6 +367,7 @@
         #main-shell {
             flex: 1;
             min-width: 0;
+            min-height: 0;
             display: flex;
             flex-direction: column;
             background: #fafbfc;
@@ -353,6 +382,33 @@
             align-items: center;
             gap: 16px;
             padding: 0 22px;
+        }
+
+        .topbar-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .sidebar-toggle {
+            width: 34px;
+            height: 34px;
+            border-radius: 8px;
+            border: 1px solid var(--line);
+            background: var(--bg-1);
+            color: var(--ink-1);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .sidebar-toggle:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+            background: #edf6e8;
         }
 
         .breadcrumb {
@@ -459,7 +515,9 @@
 
         .content-canvas {
             flex: 1;
-            overflow: auto;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
         }
 
         .view {
@@ -841,8 +899,8 @@
         }
 
         .action-card.primary {
-            border-color: #c7d6ec;
-            background: #eef3fb;
+            border-color: #bfd8bf;
+            background: #edf6e8;
         }
 
         .action-title {
@@ -1184,23 +1242,60 @@
 
         @media (max-width: 980px) {
             #app-shell {
-                flex-direction: column;
+                display: block;
+                height: auto;
+                min-height: 100svh;
+                overflow: visible;
             }
 
             #sidebar {
-                width: 100%;
-                border-right: none;
-                border-bottom: 1px solid var(--line);
+                position: fixed;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                width: min(304px, calc(100vw - 32px));
+                border-right: 1px solid var(--line);
+                border-bottom: none;
+                box-shadow: 16px 0 36px rgba(11, 27, 43, 0.16);
+                transform: translateX(-100%);
+                transition: transform 0.24s ease;
+            }
+
+            #sidebar.open {
+                transform: translateX(0);
+            }
+
+            .brand-bar {
+                min-height: auto;
+                padding: calc(env(safe-area-inset-top) + 16px) 16px 14px;
+            }
+
+            .sidebar-pad {
+                padding-top: 10px;
             }
 
             .sidebar-meta-list {
-                max-height: 180px;
+                max-height: none;
+            }
+
+            #main-shell {
+                min-height: 100svh;
             }
 
             .topbar {
                 height: auto;
                 padding: 14px;
                 flex-wrap: wrap;
+                position: sticky;
+                top: 0;
+                z-index: 12;
+                background: rgba(255, 255, 255, 0.96);
+                backdrop-filter: blur(10px);
+            }
+
+            .topbar-left {
+                min-width: 0;
+                flex: 1 1 auto;
             }
 
             .breadcrumb {
@@ -1212,6 +1307,17 @@
                 flex: 1 1 100%;
                 max-width: none;
                 margin: 0;
+            }
+
+            .topbar-actions {
+                width: 100%;
+                margin-left: 0;
+                justify-content: flex-start;
+                flex-wrap: wrap;
+            }
+
+            .topbar-meta {
+                display: none;
             }
 
             .view {
@@ -1238,42 +1344,80 @@
                 flex-wrap: wrap;
             }
         }
+
+        @media (min-width: 981px) {
+            .sidebar-toggle {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
     <div id="app-shell">
         <aside id="sidebar">
             <div class="brand-bar">
-                <div class="brand-mark">CS</div>
+                <div class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="presentation" focusable="false">
+                        <path d="M60 6 L108 32 L108 88 L60 114 L12 88 L12 32 Z" fill="#FFFFFF" stroke="#0B1B2B" stroke-width="2.4" />
+                        <path d="M60 12 L102 35 L102 85 L60 108 L18 85 L18 35 Z" fill="none" stroke="#0B1B2B" stroke-width="0.8" opacity="0.35" />
+                        <g transform="translate(38 70)">
+                            <circle cx="0" cy="0" r="11" fill="#0B1B2B" />
+                            <path d="M-9 -2 Q0 -5 9 -2" stroke="#1A4FA0" stroke-width="1.4" fill="none" />
+                            <path d="M-9 2 Q0 5 9 2" stroke="#1A4FA0" stroke-width="1.1" fill="none" opacity="0.65" />
+                            <line x1="-7" y1="-3.5" x2="-7" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                            <line x1="-4.2" y1="-3.5" x2="-4.2" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                            <line x1="-1.4" y1="-3.5" x2="-1.4" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                            <line x1="1.4" y1="-3.5" x2="1.4" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                            <line x1="4.2" y1="-3.5" x2="4.2" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                            <line x1="7" y1="-3.5" x2="7" y2="-0.5" stroke="#FFFFFF" stroke-width="0.7" stroke-linecap="round" />
+                        </g>
+                        <g transform="rotate(35 60 60)">
+                            <rect x="55" y="20" width="14" height="42" rx="2" fill="#0B1B2B" />
+                            <line x1="62" y1="22" x2="62" y2="60" stroke="#243447" stroke-width="0.8" />
+                            <path d="M55 24 Q58 18 62 18 Q66 18 69 24" fill="#0B1B2B" />
+                            <rect x="59" y="6" width="6" height="16" rx="2" fill="#103573" />
+                            <line x1="59" y1="8" x2="65" y2="8" stroke="#FFFFFF" stroke-width="0.7" opacity="0.7" />
+                            <line x1="59" y1="11" x2="65" y2="11" stroke="#FFFFFF" stroke-width="0.7" opacity="0.7" />
+                            <line x1="59" y1="14" x2="65" y2="14" stroke="#FFFFFF" stroke-width="0.7" opacity="0.7" />
+                            <line x1="59" y1="17" x2="65" y2="17" stroke="#FFFFFF" stroke-width="0.7" opacity="0.7" />
+                        </g>
+                        <polyline points="76,80 84,76 92,79 100,72" fill="none" stroke="#1A4FA0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                        <circle cx="100" cy="72" r="2" fill="#1A4FA0" />
+                    </svg>
+                </div>
                 <div class="brand-copy">
                     <div class="brand-title">Cricket Statistician</div>
-                    <div class="brand-subtitle">cricket.devarajan.in</div>
+                <div class="brand-subtitle">Scorebook operations</div>
                 </div>
             </div>
             <div class="sidebar-pad">
-                <a href="__APP_BASE_PATH__/" class="new-chat-btn">
+                <a href="/" class="new-chat-btn">
                     <span>＋</span>
                     <span>New chat</span>
                     <span class="new-chat-btn-kbd">⌘N</span>
                 </a>
             </div>
             <nav class="sidebar-nav">
-                <a class="sidebar-nav-item" data-nav="ask" href="__APP_BASE_PATH__/">
+                <a class="sidebar-nav-item" data-nav="ask" href="/">
                     <span class="sidebar-nav-icon">💬</span>
                     <span class="sidebar-nav-label">Ask</span>
                 </a>
-                <a class="sidebar-nav-item" data-nav="history" href="__APP_BASE_PATH__/">
+                <a class="sidebar-nav-item" data-nav="history" href="/">
                     <span class="sidebar-nav-icon">🕘</span>
                     <span class="sidebar-nav-label">History</span>
                 </a>
-                <a class="sidebar-nav-item" data-nav="data" href="__APP_BASE_PATH__/data">
+                <a class="sidebar-nav-item" data-nav="data" href="/data">
                     <span class="sidebar-nav-icon">📊</span>
-                    <span class="sidebar-nav-label">Data Management</span>
+                    <span class="sidebar-nav-label">Data Pavilion</span>
                 </a>
-                <a class="sidebar-nav-item" data-nav="kb" href="__APP_BASE_PATH__/knowledge">
+                <a class="sidebar-nav-item" data-nav="kb" href="/knowledge">
                     <span class="sidebar-nav-icon">🧠</span>
-                    <span class="sidebar-nav-label">Knowledge Base</span>
+                    <span class="sidebar-nav-label">Knowledge Ledger</span>
                     <span class="sidebar-nav-count" id="nav-kb-count">0</span>
+                </a>
+                <a class="sidebar-nav-item" data-nav="usage" href="/usage">
+                    <span class="sidebar-nav-icon">💸</span>
+                    <span class="sidebar-nav-label">AI API Usage</span>
                 </a>
                 <a class="sidebar-nav-item" data-nav="players" href="javascript:void(0)">
                     <span class="sidebar-nav-icon">👥</span>
@@ -1288,32 +1432,36 @@
             </nav>
             <div class="sidebar-section-head">
                 <span class="sidebar-section-title">Recent</span>
-                <a class="sidebar-section-link" href="__APP_BASE_PATH__/">See all</a>
+                <a class="sidebar-section-link" href="/">See all</a>
             </div>
             <div class="sidebar-meta-list" id="sidebar-meta-list"></div>
             <div class="sidebar-footer">
                 <div class="user-row">
-                    <div class="user-avatar">RD</div>
+                    <div class="user-avatar" id="sidebar-user-avatar">CS</div>
                     <div class="user-copy">
-                        <div class="user-name">Reach Devarajan</div>
-                        <div class="user-meta" id="sidebar-user-meta">Pro · live data</div>
+                        <div class="user-name" id="sidebar-user-name">Cricket workspace</div>
+                        <div class="user-meta" id="sidebar-user-meta">Live data · workspace</div>
                     </div>
                     <span class="user-gear">⚙</span>
                 </div>
             </div>
         </aside>
+        <div id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
         <div id="main-shell">
             <header class="topbar">
-                <div class="breadcrumb">
-                    <span class="crumb-item" id="breadcrumb-current">Data Management</span>
+                <div class="topbar-left">
+                    <button class="sidebar-toggle" type="button" onclick="toggleSidebar()" aria-label="Toggle navigation">☰</button>
+                    <div class="breadcrumb">
+                        <span class="crumb-item" id="breadcrumb-current">Data Pavilion</span>
+                    </div>
                 </div>
                 <div class="cmd-bar">
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.7"></circle>
                         <path d="M16 16l4 4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
                     </svg>
-                    <input id="header-search" type="text" placeholder="Filter sources, tables, jobs">
+                    <input id="header-search" type="text" placeholder="Filter sources, scorebooks, jobs">
                     <span class="cmd-bar-kbd">⌘K</span>
                 </div>
                 <div class="topbar-actions">
@@ -1328,8 +1476,8 @@
             <main class="content-canvas">
                 <section class="view active" id="view-data">
                     <div class="page-title">
-                        <h1>Data Management</h1>
-                        <p>Sources, mapping coverage, and pipeline status.</p>
+                        <h1>Data Pavilion</h1>
+                        <p>Scorebook sources, mapping coverage, and pipeline status.</p>
                     </div>
 
                     <div class="kpi-grid" id="data-kpis">
@@ -1397,8 +1545,8 @@
 
                 <section class="view" id="view-kb">
                     <div class="page-title">
-                        <h1>Knowledge Base</h1>
-                        <p>Curated lore that the model checks before answering. Each fact is editable, taggable, and reviewable.</p>
+                        <h1>Knowledge Ledger</h1>
+                        <p>Curated cricket context that the model checks before answering. Each fact is editable, taggable, and reviewable.</p>
                     </div>
 
                     <div class="kpi-grid" id="kb-kpis">
@@ -1429,6 +1577,54 @@
                     </div>
                     <div class="fact-list" id="kb-facts-list"></div>
                 </section>
+
+                <section class="view" id="view-usage">
+                    <div class="page-title">
+                        <h1>AI API Usage</h1>
+                        <p>Token counts are authoritative — taken straight from the provider's response. Cost = tokens × the per-model prices in <code>data/model_pricing.json</code> (override path with the <code>MODEL_PRICING_FILE</code> env var). Update that file when a vendor reprices; a model absent from it records tokens with cost shown as "—".</p>
+                    </div>
+
+                    <div class="kpi-grid" id="usage-kpis">
+                        <div class="kpi-card accent"><div class="kpi-label">Today · est. cost</div><div class="kpi-value">-</div><div class="kpi-sub">Loading…</div></div>
+                        <div class="kpi-card"><div class="kpi-label">Last 30 days · est. cost</div><div class="kpi-value">-</div><div class="kpi-sub">Loading…</div></div>
+                        <div class="kpi-card"><div class="kpi-label">Lifetime calls</div><div class="kpi-value">-</div><div class="kpi-sub">Loading…</div></div>
+                        <div class="kpi-card"><div class="kpi-label">Lifetime est. cost</div><div class="kpi-value">-</div><div class="kpi-sub">Loading…</div></div>
+                    </div>
+
+                    <div class="section-row">
+                        <h2 class="section-title">By model</h2>
+                    </div>
+                    <div class="surface-card table-wrap">
+                        <table class="ops-table" id="usage-by-model-table">
+                            <thead>
+                                <tr>
+                                    <th>Model</th>
+                                    <th class="num">Calls</th>
+                                    <th class="num">Input tokens</th>
+                                    <th class="num">Output tokens</th>
+                                    <th class="num">Est. cost (USD)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-by-model-body"></tbody>
+                        </table>
+                    </div>
+
+                    <div class="section-row">
+                        <h2 class="section-title">Last 30 days</h2>
+                    </div>
+                    <div class="surface-card table-wrap">
+                        <table class="ops-table" id="usage-by-day-table">
+                            <thead>
+                                <tr>
+                                    <th>Date</th>
+                                    <th class="num">Calls</th>
+                                    <th class="num">Est. cost (USD)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-by-day-body"></tbody>
+                        </table>
+                    </div>
+                </section>
             </main>
         </div>
     </div>
@@ -1449,14 +1645,14 @@
 
     <script>
         const CATEGORY_COLORS = {
-            player_anomaly: '#8b3fb8',
+            player_anomaly: '#9f3d35',
             venue: '#2b8ad9',
-            team_history: '#b68a1e',
-            competition: '#1a4fa0',
-            rules: '#0f8a6e',
+            team_history: '#9a7418',
+            competition: '#146347',
+            rules: '#146347',
             data_format: '#7b8fa6',
             historical: '#4d6178',
-            records: '#b68a1e',
+            records: '#9a7418',
             discovered: '#c28a0e',
         };
         const CATEGORY_LABELS = {
@@ -1479,17 +1675,58 @@
             { id: 'full-refresh', title: 'Full Refresh Pipeline', desc: 'Run the complete refresh and reconciliation pipeline.', primary: true },
         ];
 
-        const path = window.location.pathname.replace((window.APP_BASE_PATH || '').replace(/\/+$/, ''), '') || '/admin';
-        const currentView = path.endsWith('/knowledge') ? 'kb' : 'data';
+        const path = window.location.pathname || '/admin';
+        const currentView = path.endsWith('/usage') ? 'usage' : path.endsWith('/knowledge') ? 'kb' : 'data';
         const kbSearchState = { text: '', category: '' };
         let statusData = null;
         let profileData = null;
         let kbData = { facts: [], pending: [] };
+        let usageData = null;
         let pipelineEvents = [];
         let pendingFocusId = null;
         let editingFactId = null;
         let editingPendingId = null;
         let actionRunning = false;
+        let currentUser = null;
+        let authEnabled = false;
+
+        function isMobileLayout() {
+            return window.innerWidth <= 980;
+        }
+
+        function syncSidebarState(forceClose = false) {
+            const sidebar = document.getElementById('sidebar');
+            const backdrop = document.getElementById('sidebar-backdrop');
+            if (!sidebar || !backdrop) return;
+
+            if (!isMobileLayout()) {
+                sidebar.classList.remove('open');
+                backdrop.classList.remove('visible');
+                document.body.classList.remove('mobile-sidebar-open');
+                return;
+            }
+
+            if (forceClose) {
+                sidebar.classList.remove('open');
+            }
+
+            const open = sidebar.classList.contains('open');
+            backdrop.classList.toggle('visible', open);
+            document.body.classList.toggle('mobile-sidebar-open', open);
+        }
+
+        function toggleSidebar() {
+            if (!isMobileLayout()) return;
+            const sidebar = document.getElementById('sidebar');
+            if (!sidebar) return;
+            sidebar.classList.toggle('open');
+            syncSidebarState();
+        }
+
+        function closeSidebar() {
+            if (!isMobileLayout()) return;
+            syncSidebarState(true);
+        }
 
         const headerSearch = document.getElementById('header-search');
         const factModal = document.getElementById('fact-modal');
@@ -1513,6 +1750,59 @@
 
         function fmtPct(value) {
             return `${Number(value || 0).toFixed(1)}%`;
+        }
+
+        function deliverySummary() {
+            if (!(statusData && statusData.tables && statusData.tables.deliveries)) {
+                return 'live data';
+            }
+            return `${fmtNumber(statusData.tables.deliveries)} deliveries`;
+        }
+
+        function getUserDisplayName(user) {
+            if (!user) return authEnabled ? 'Secure access' : 'Cricket workspace';
+            return user.name || user.email || 'Verified access';
+        }
+
+        function getUserInitials(user) {
+            const seed = String((user && (user.name || user.email || user.id)) || 'Cricket Statistician')
+                .replace(/@.*$/, '')
+                .replace(/[^A-Za-z0-9]+/g, ' ')
+                .trim();
+            const parts = seed.split(/\s+/).filter(Boolean);
+            if (parts.length >= 2) {
+                return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+            }
+            return (seed.slice(0, 2) || 'CS').toUpperCase();
+        }
+
+        function getUserAccessLabel(user) {
+            if (!authEnabled) return 'Local mode';
+            if (!user) return 'Secure access';
+            if (user.provider === 'supabase') return 'Signed in';
+            return 'Authenticated';
+        }
+
+        function renderUserIdentity() {
+            const avatar = document.getElementById('sidebar-user-avatar');
+            const name = document.getElementById('sidebar-user-name');
+            const meta = document.getElementById('sidebar-user-meta');
+            if (avatar) avatar.textContent = getUserInitials(currentUser);
+            if (name) name.textContent = getUserDisplayName(currentUser);
+            if (meta) meta.textContent = `${getUserAccessLabel(currentUser)} · ${deliverySummary()}`;
+        }
+
+        async function loadCurrentUser() {
+            try {
+                const response = await fetch(withBasePath('/api/auth/me'), { credentials: 'same-origin' });
+                if (!response.ok) throw new Error('Failed to load auth state');
+                const payload = await response.json();
+                currentUser = payload.user || null;
+                authEnabled = Boolean(payload.auth_enabled);
+            } catch {
+                currentUser = null;
+                authEnabled = false;
+            }
         }
 
         function colorForPct(value) {
@@ -1557,10 +1847,7 @@
                 </div>
             `).join('');
 
-            const userMeta = document.getElementById('sidebar-user-meta');
-            if (statusData && statusData.tables && statusData.tables.deliveries) {
-                userMeta.textContent = `Pro · ${fmtNumber(statusData.tables.deliveries)} deliveries`;
-            }
+            renderUserIdentity();
 
             document.getElementById('nav-players-count').textContent = statusData && statusData.sources && statusData.sources.player_map ? fmtNumber(statusData.sources.player_map.total) : '0';
             const venues = statusData && statusData.tables ? (statusData.tables.venues || statusData.tables.grounds || statusData.tables.venue_dimension || 0) : 0;
@@ -1573,21 +1860,27 @@
         }
 
         function setTopbarState() {
-            const dataView = currentView === 'data';
-            document.getElementById('view-data').classList.toggle('active', dataView);
-            document.getElementById('view-kb').classList.toggle('active', !dataView);
-            document.getElementById('breadcrumb-current').textContent = dataView ? 'Data Management' : 'Knowledge Base';
-            document.getElementById('topbar-meta').textContent = dataView
-                ? 'Last sync · just now'
-                : `${fmtNumber((kbData.facts || []).filter(f => f.active).length)} active facts`;
-            headerSearch.placeholder = dataView
-                ? 'Filter sources, tables, jobs'
-                : 'Search facts';
-            headerSearch.value = dataView ? '' : kbSearchState.text;
-            document.getElementById('refresh-all-btn').classList.toggle('hidden', !dataView);
-            document.getElementById('run-pipeline-btn').classList.toggle('hidden', !dataView);
-            document.getElementById('rediscover-btn').classList.toggle('hidden', dataView);
-            document.getElementById('add-fact-btn').classList.toggle('hidden', dataView);
+            const VIEW_TITLES = { data: 'Data Pavilion', kb: 'Knowledge Ledger', usage: 'AI API Usage' };
+            ['data', 'kb', 'usage'].forEach(v => {
+                const el = document.getElementById('view-' + v);
+                if (el) el.classList.toggle('active', currentView === v);
+            });
+            document.getElementById('breadcrumb-current').textContent = VIEW_TITLES[currentView] || 'Settings';
+            const activeFacts = (kbData.facts || []).filter(f => f.active).length;
+            document.getElementById('topbar-meta').textContent =
+                currentView === 'kb' ? `${fmtNumber(activeFacts)} active facts`
+                : currentView === 'usage' ? (usageData ? `${fmtNumber(usageData.total_calls)} total calls` : 'Loading usage…')
+                : 'Last sync · just now';
+            headerSearch.placeholder =
+                currentView === 'kb' ? 'Search facts'
+                : currentView === 'usage' ? 'AI API Usage'
+                : 'Filter sources, scorebooks, jobs';
+            headerSearch.value = currentView === 'kb' ? kbSearchState.text : '';
+            headerSearch.disabled = currentView === 'usage';
+            document.getElementById('refresh-all-btn').classList.toggle('hidden', currentView !== 'data');
+            document.getElementById('run-pipeline-btn').classList.toggle('hidden', currentView !== 'data');
+            document.getElementById('rediscover-btn').classList.toggle('hidden', currentView !== 'kb');
+            document.getElementById('add-fact-btn').classList.toggle('hidden', currentView !== 'kb');
         }
 
         function renderDataKpis() {
@@ -1597,7 +1890,7 @@
                 : [];
             const matchesIndexed = cricsheetRows.reduce((sum, row) => sum + (row.count || 0), 0);
             const playerMap = statusData && statusData.sources ? statusData.sources.player_map : null;
-            const mappedPct = playerMap && playerMap.total ? (playerMap.fully_mapped / playerMap.total) * 100 : 0;
+            const mappedPct = playerMap && playerMap.mappable ? (playerMap.fully_mapped / playerMap.mappable) * 100 : 0;
             const totalProfiles = profileData && profileData.total ? profileData.total : 0;
             const cricsheetPlayers = profileData && profileData.cricsheet_total ? profileData.cricsheet_total : 0;
             const profilePct = profileData && profileData.coverage_pct ? Number(profileData.coverage_pct) : 0;
@@ -1616,7 +1909,7 @@
                 <div class="kpi-card">
                     <div class="kpi-label">Players mapped</div>
                     <div class="kpi-value">${fmtNumber(playerMap ? playerMap.fully_mapped : 0)}</div>
-                    <div class="kpi-sub ${mappedPct >= 80 ? 'good' : mappedPct >= 30 ? 'warn' : 'magenta'}">${playerMap ? `${fmtPct(mappedPct)} of ${fmtNumber(playerMap.total)}` : 'No mapping data'}</div>
+                    <div class="kpi-sub ${mappedPct >= 80 ? 'good' : mappedPct >= 30 ? 'warn' : 'magenta'}">${playerMap ? `${fmtPct(mappedPct)} of ${fmtNumber(playerMap.mappable)} Test players` : 'No mapping data'}</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Profile coverage</div>
@@ -1645,7 +1938,7 @@
         function renderSources() {
             const kaggle = statusData && statusData.sources ? statusData.sources.kaggle_tests : null;
             const mapping = statusData && statusData.sources ? statusData.sources.player_map : null;
-            const mappingPct = mapping && mapping.total ? (mapping.fully_mapped / mapping.total) * 100 : 0;
+            const mappingPct = mapping && mapping.mappable ? (mapping.fully_mapped / mapping.mappable) * 100 : 0;
             setStatusPill('kaggle-status-label', kaggle && kaggle.match_count ? 'Complete' : 'Unavailable', kaggle && kaggle.match_count ? 'var(--ok)' : 'var(--magenta)');
             setStatusPill('mapping-status-label', mappingPct >= 80 ? 'Complete' : mappingPct >= 30 ? 'In progress' : 'Needs work', mappingPct >= 80 ? 'var(--ok)' : mappingPct >= 30 ? 'var(--warn)' : 'var(--magenta)');
             renderSourceRows('kaggle-source-rows', [
@@ -1655,10 +1948,11 @@
                 ['Last refresh', 'Current snapshot'],
             ]);
             renderSourceRows('mapping-source-rows', [
-                ['Total players', mapping ? fmtNumber(mapping.total) : '0'],
-                ['Fully mapped', mapping ? fmtNumber(mapping.fully_mapped) : '0'],
+                ['Test players', mapping ? fmtNumber(mapping.mappable) : '0'],
+                ['Mapped', mapping ? fmtNumber(mapping.fully_mapped) : '0'],
                 ['Coverage', mapping ? fmtPct(mappingPct) : '0%'],
-                ['Unresolved', mapping ? fmtNumber((mapping.total || 0) - (mapping.fully_mapped || 0)) : '0'],
+                ['Unmatched', mapping ? fmtNumber((mapping.mappable || 0) - (mapping.fully_mapped || 0)) : '0'],
+                ['Non-Test players', mapping ? fmtNumber((mapping.total || 0) - (mapping.mappable || 0)) : '0'],
             ]);
         }
 
@@ -1736,8 +2030,20 @@
         }
 
         function pushPipelineEvent(name, status, detail) {
-            pipelineEvents.unshift({ name, status, detail, time: new Date() });
+            const event = { name, status, detail, time: new Date() };
+            pipelineEvents.unshift(event);
             pipelineEvents = pipelineEvents.slice(0, 6);
+            renderPipelineEvents();
+            return event;
+        }
+
+        // Update an existing pipeline-run row in place (e.g. running → completed)
+        // instead of adding a second row, which would leave a stale "running…" twin.
+        function updatePipelineEvent(event, status, detail) {
+            if (!event) return;
+            event.status = status;
+            event.detail = detail;
+            event.time = new Date();
             renderPipelineEvents();
         }
 
@@ -1779,6 +2085,73 @@
             log.textContent = text;
         }
 
+        // Parse a response as JSON, tolerating the proxy returning an HTML error
+        // page (e.g. a gateway timeout) instead of JSON.
+        async function parseJsonSafe(response) {
+            const text = await response.text();
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                throw new Error(
+                    `Server returned a non-JSON response (HTTP ${response.status}). `
+                    + `It may still be processing — this panel will keep checking.`
+                );
+            }
+        }
+
+        // Render a finished pipeline result into the given event row (or a new
+        // one if none was supplied), and show its log.
+        function finishWithPayload(label, payload, event) {
+            const stepCount = Array.isArray(payload.steps) ? payload.steps.length : 0;
+            const okCount = Array.isArray(payload.steps) ? payload.steps.filter(step => step && step.ok).length : 0;
+            const status = payload.status || 'error';
+            const detail = {
+                meta: stepCount ? `${okCount}/${stepCount} steps` : 'action',
+                result: status === 'ok' ? 'completed' : status === 'partial' ? 'partial' : 'failed',
+            };
+            if (event) {
+                updatePipelineEvent(event, status, detail);
+            } else {
+                pushPipelineEvent(label, status, detail);
+            }
+            openLog(payload.log || payload.error || 'No log output returned.');
+        }
+
+        // Poll the lightweight job-status endpoint until the background pipeline
+        // finishes, then resolve the SAME row in place and reload page data. Each
+        // poll is a quick GET, so nothing holds an HTTP connection open.
+        async function pollJobUntilDone(label, event) {
+            const startedAt = Date.now();
+            const MAX_MS = 30 * 60 * 1000;   // give up watching after 30 min
+            const INTERVAL_MS = 3000;
+            while (Date.now() - startedAt < MAX_MS) {
+                await new Promise(resolve => setTimeout(resolve, INTERVAL_MS));
+                let status;
+                try {
+                    const response = await fetch(withBasePath('/api/admin/job-status'));
+                    status = await parseJsonSafe(response);
+                } catch (e) {
+                    continue;   // transient blip — keep polling
+                }
+                if (!status.running) {
+                    if (status.last) {
+                        finishWithPayload(label, status.last, event);
+                    } else {
+                        updatePipelineEvent(event, 'ok', { meta: 'done', result: 'completed' });
+                        openLog(`${label} finished.`);
+                    }
+                    await loadAllData();
+                    return;
+                }
+                const secs = Math.round((Date.now() - startedAt) / 1000);
+                updatePipelineEvent(event, 'partial', { meta: 'running', result: `running… ${secs}s` });
+                openLog(`${label} is running in the background… (${secs}s elapsed)`);
+            }
+            updatePipelineEvent(event, 'partial', { meta: 'still running', result: 'check later' });
+            openLog(`${label} is taking a while. It is still running on the server — reload this page later to see the final result.`);
+            await loadAllData();
+        }
+
         async function runAction(actionId, trigger) {
             if (actionRunning) return;
             actionRunning = true;
@@ -1788,22 +2161,26 @@
                 target.innerHTML = '<span class="spinner"></span><span>Running…</span>';
                 target.disabled = true;
             }
+            const label = actionId.replace(/-/g, ' ');
             try {
                 const response = await fetch(withBasePath(`/api/admin/${actionId}`), { method: 'POST' });
-                const payload = await response.json();
-                const stepCount = Array.isArray(payload.steps) ? payload.steps.length : 0;
-                const okCount = Array.isArray(payload.steps) ? payload.steps.filter(step => step && step.ok).length : 0;
-                pushPipelineEvent(actionId.replace(/-/g, ' '), payload.status || 'error', {
-                    meta: stepCount ? `${okCount}/${stepCount} steps` : 'action',
-                    result: payload.status === 'ok' ? 'completed' : payload.status === 'partial' ? 'partial' : 'failed',
-                });
-                openLog(payload.log || payload.error || 'No log output returned.');
-                await loadAllData();
+                const payload = await parseJsonSafe(response);
+                if (response.status === 409) {
+                    // Another pipeline is already running — attach to it and track it.
+                    const ev = pushPipelineEvent(label, 'partial', { meta: 'busy', result: 'running…' });
+                    openLog(payload.log || payload.error || 'Another admin action is already running.');
+                    await pollJobUntilDone(label, ev);
+                } else if (payload && payload.status === 'started') {
+                    const ev = pushPipelineEvent(label, 'partial', { meta: 'running', result: 'running…' });
+                    openLog(payload.log || `${label} started…`);
+                    await pollJobUntilDone(label, ev);
+                } else {
+                    // Older synchronous-style response — handle directly.
+                    finishWithPayload(label, payload);
+                    await loadAllData();
+                }
             } catch (error) {
-                pushPipelineEvent(actionId.replace(/-/g, ' '), 'error', {
-                    meta: 'request',
-                    result: 'failed',
-                });
+                pushPipelineEvent(label, 'error', { meta: 'request', result: 'failed' });
                 openLog(`ERROR\n\n${error.message}`);
             } finally {
                 actionRunning = false;
@@ -1951,8 +2328,66 @@
             kbData = await response.json();
         }
 
+        async function loadUsage() {
+            try {
+                const response = await fetch(withBasePath('/api/admin/usage'));
+                usageData = await response.json();
+            } catch (e) {
+                usageData = null;
+            }
+        }
+
+        function renderUsage() {
+            if (!usageData) return;
+            const fmtUsd = v => '$' + (Number(v) || 0).toFixed(4);
+            document.getElementById('usage-kpis').innerHTML = `
+                <div class="kpi-card accent">
+                    <div class="kpi-label">Today · est. cost</div>
+                    <div class="kpi-value">${fmtUsd(usageData.today_cost_usd)}</div>
+                    <div class="kpi-sub">${fmtNumber(usageData.today_calls)} calls</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Last 30 days · est. cost</div>
+                    <div class="kpi-value">${fmtUsd(usageData.last30_cost_usd)}</div>
+                    <div class="kpi-sub">${fmtNumber(usageData.last30_calls)} calls</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Lifetime calls</div>
+                    <div class="kpi-value">${fmtNumber(usageData.total_calls)}</div>
+                    <div class="kpi-sub">${fmtNumber(usageData.total_prompt_tokens)} in · ${fmtNumber(usageData.total_completion_tokens)} out</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">Lifetime est. cost</div>
+                    <div class="kpi-value">${fmtUsd(usageData.total_cost_usd)}</div>
+                    <div class="kpi-sub">All providers</div>
+                </div>
+            `;
+            const byModel = usageData.by_model || [];
+            document.getElementById('usage-by-model-body').innerHTML = byModel.length
+                ? byModel.map(m => `
+                    <tr>
+                        <td>${escapeHtml(m.model)}</td>
+                        <td class="num">${fmtNumber(m.calls)}</td>
+                        <td class="num">${fmtNumber(m.prompt_tokens)}</td>
+                        <td class="num">${fmtNumber(m.completion_tokens)}</td>
+                        <td class="num">${fmtUsd(m.cost_usd)}</td>
+                    </tr>
+                `).join('')
+                : '<tr><td colspan="5">No LLM calls recorded yet.</td></tr>';
+            const byDay = usageData.by_day || [];
+            document.getElementById('usage-by-day-body').innerHTML = byDay.length
+                ? byDay.map(d => `
+                    <tr>
+                        <td>${escapeHtml(d.date)}</td>
+                        <td class="num">${fmtNumber(d.calls)}</td>
+                        <td class="num">${fmtUsd(d.cost_usd)}</td>
+                    </tr>
+                `).join('')
+                : '<tr><td colspan="3">No LLM calls in the last 30 days.</td></tr>';
+        }
+
         async function loadAllData() {
-            const tasks = [loadStatus(), loadProfileStatus(), loadKB()];
+            const tasks = [loadStatus(), loadProfileStatus(), loadKB(), loadCurrentUser(), loadUsage()];
             await Promise.all(tasks);
             renderSidebarMeta();
             renderDataKpis();
@@ -1963,6 +2398,7 @@
             renderPending();
             renderKbFilters();
             renderFacts();
+            renderUsage();
             setTopbarState();
         }
 
@@ -2073,11 +2509,13 @@
         factModal.addEventListener('click', event => {
             if (event.target === factModal) closeModal();
         });
+        window.addEventListener('resize', () => syncSidebarState(true));
 
         renderCategoryOptions();
         renderActionGrid();
         renderPipelineEvents();
         setTopbarState();
+        syncSidebarState(true);
         loadAllData().catch(error => {
             document.getElementById('view-data').innerHTML = `<div class="fact-empty">Failed to load operations data: ${escapeHtml(error.message)}</div>`;
         });

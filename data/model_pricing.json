@@ -1,0 +1,8 @@
+{
+  "_format": "Anthropic/Google/etc list prices in USD per million tokens. Update when a vendor reprices. Path overridable via the MODEL_PRICING_FILE environment variable. A model absent from this file records tokens with NULL cost (UI shows '—').",
+  "_updated": "2026-05-23",
+  "claude-haiku-4-5-20251001": {"input": 1.0, "output": 5.0},
+  "claude-haiku-4-5":          {"input": 1.0, "output": 5.0},
+  "gemini-2.5-flash":          {"input": 0.30, "output": 2.50},
+  "gemini-2.5-flash-lite":     {"input": 0.10, "output": 0.40}
+}

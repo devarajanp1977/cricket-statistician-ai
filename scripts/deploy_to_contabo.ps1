@@ -30,7 +30,8 @@ param(
     [Parameter(Mandatory)][string]$RootPassword,
     [string]$SshUser = "root",
     [switch]$SkipDb,
-    [switch]$SkipVenv
+    [switch]$SkipVenv,
+    [switch]$ForceEnv
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,15 +129,26 @@ Write-Host "  unpacking..."
 Invoke-Remote "install -d -o cricket -g cricket /opt/cricket-statistician-ai && tar -xzf /tmp/cricket-src.tar.gz -C /opt/cricket-statistician-ai && chown -R cricket:cricket /opt/cricket-statistician-ai && rm /tmp/cricket-src.tar.gz"
 
 # --------------------------------------------------------------------------
-# 3. Upload .env
+# 3. .env  (PRESERVE the server's existing file by default so a deploy can
+#    never clobber live secrets; only upload on first bootstrap, or with
+#    -ForceEnv to intentionally push a new local .env.)
 # --------------------------------------------------------------------------
-Write-Host "`n[3/5] Uploading .env..."
+Write-Host "`n[3/5] Reconciling .env..."
 $localEnv = Join-Path $RepoRoot ".env"
-if (Test-Path $localEnv) {
+if ($haveSshpass) {
+    $envState = & sshpass -p $RootPassword ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=NUL "$SshUser@$ServerIp" "test -f /opt/cricket-statistician-ai/.env && echo EXISTS || echo MISSING"
+} else {
+    $envState = & plink -ssh -pw $RootPassword -batch "$SshUser@$ServerIp" "test -f /opt/cricket-statistician-ai/.env && echo EXISTS || echo MISSING"
+}
+if (($envState -match 'EXISTS') -and -not $ForceEnv) {
+    Write-Host "  Server .env present - PRESERVING it (use -ForceEnv to overwrite)." -ForegroundColor Green
+} elseif (Test-Path $localEnv) {
+    $why = if ($ForceEnv) { "-ForceEnv set" } else { "no server .env (first bootstrap)" }
+    Write-Host "  Uploading local .env ($why)..." -ForegroundColor Yellow
     Copy-ToServer -Local $localEnv -Remote "/tmp/cricket.env"
     Invoke-Remote "mv /tmp/cricket.env /opt/cricket-statistician-ai/.env && chown cricket:cricket /opt/cricket-statistician-ai/.env && chmod 600 /opt/cricket-statistician-ai/.env"
 } else {
-    Write-Host "  WARNING: no .env found at $localEnv - skipping. Create it on the server manually." -ForegroundColor Yellow
+    Write-Host "  WARNING: no server .env and no local .env - create it on the server manually." -ForegroundColor Yellow
 }
 
 # --------------------------------------------------------------------------
