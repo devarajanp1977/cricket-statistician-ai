@@ -372,7 +372,11 @@ async def admin_status():
             mapped = con.execute(
                 "SELECT COUNT(*) FROM player_map WHERE cricsheet_id IS NOT NULL AND kaggle_player_id IS NOT NULL"
             ).fetchone()[0]
-            status["sources"]["player_map"] = {"total": total, "fully_mapped": mapped}
+            # Mappable universe = players that exist in the Kaggle Test dataset.
+            # Cricsheet players who never played Tests have no Kaggle record to
+            # map to, so coverage is measured against this ceiling, not all players.
+            mappable = con.execute("SELECT COUNT(*) FROM kaggle_players").fetchone()[0]
+            status["sources"]["player_map"] = {"total": total, "fully_mapped": mapped, "mappable": mappable}
         except Exception:
             pass
 
@@ -611,6 +615,7 @@ async def full_refresh():
     from load_cricsheet import load_cricsheet
     from load_kaggle import load_kaggle
     from backfill_tests import backfill
+    from derive_debut_years import derive_debut_years
 
     return await _run_locked_admin_pipeline("full-refresh", [
         ("download_cricsheet", download_cricsheet, {"force": True}),
@@ -618,6 +623,7 @@ async def full_refresh():
         ("load_cricsheet", load_cricsheet, {"force": True}),
         ("load_kaggle", load_kaggle, {"force": True}),
         ("backfill", backfill, {}),
+        ("derive_debut_years", derive_debut_years, {}),
     ], invalidate_cache=True)
 
 
@@ -748,9 +754,11 @@ async def cache_clear():
 async def seed_profiles():
     """Seed player_profiles table from ESPN Cricinfo (full seed)."""
     from seed_player_profiles import seed
+    from derive_debut_years import derive_debut_years
 
     return await _run_locked_admin_pipeline("seed-profiles", [
         ("seed_player_profiles", seed, {"refresh": False, "report_only": False}),
+        ("derive_debut_years", derive_debut_years, {}),
     ], invalidate_cache=False)
 
 
@@ -758,9 +766,11 @@ async def seed_profiles():
 async def refresh_profiles():
     """Incremental refresh of player_profiles (new + stale active)."""
     from seed_player_profiles import seed
+    from derive_debut_years import derive_debut_years
 
     return await _run_locked_admin_pipeline("refresh-profiles", [
         ("refresh_player_profiles", seed, {"refresh": True, "report_only": False}),
+        ("derive_debut_years", derive_debut_years, {}),
     ], invalidate_cache=False)
 
 

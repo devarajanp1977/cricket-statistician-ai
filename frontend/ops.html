@@ -1890,7 +1890,7 @@
                 : [];
             const matchesIndexed = cricsheetRows.reduce((sum, row) => sum + (row.count || 0), 0);
             const playerMap = statusData && statusData.sources ? statusData.sources.player_map : null;
-            const mappedPct = playerMap && playerMap.total ? (playerMap.fully_mapped / playerMap.total) * 100 : 0;
+            const mappedPct = playerMap && playerMap.mappable ? (playerMap.fully_mapped / playerMap.mappable) * 100 : 0;
             const totalProfiles = profileData && profileData.total ? profileData.total : 0;
             const cricsheetPlayers = profileData && profileData.cricsheet_total ? profileData.cricsheet_total : 0;
             const profilePct = profileData && profileData.coverage_pct ? Number(profileData.coverage_pct) : 0;
@@ -1909,7 +1909,7 @@
                 <div class="kpi-card">
                     <div class="kpi-label">Players mapped</div>
                     <div class="kpi-value">${fmtNumber(playerMap ? playerMap.fully_mapped : 0)}</div>
-                    <div class="kpi-sub ${mappedPct >= 80 ? 'good' : mappedPct >= 30 ? 'warn' : 'magenta'}">${playerMap ? `${fmtPct(mappedPct)} of ${fmtNumber(playerMap.total)}` : 'No mapping data'}</div>
+                    <div class="kpi-sub ${mappedPct >= 80 ? 'good' : mappedPct >= 30 ? 'warn' : 'magenta'}">${playerMap ? `${fmtPct(mappedPct)} of ${fmtNumber(playerMap.mappable)} Test players` : 'No mapping data'}</div>
                 </div>
                 <div class="kpi-card">
                     <div class="kpi-label">Profile coverage</div>
@@ -1938,7 +1938,7 @@
         function renderSources() {
             const kaggle = statusData && statusData.sources ? statusData.sources.kaggle_tests : null;
             const mapping = statusData && statusData.sources ? statusData.sources.player_map : null;
-            const mappingPct = mapping && mapping.total ? (mapping.fully_mapped / mapping.total) * 100 : 0;
+            const mappingPct = mapping && mapping.mappable ? (mapping.fully_mapped / mapping.mappable) * 100 : 0;
             setStatusPill('kaggle-status-label', kaggle && kaggle.match_count ? 'Complete' : 'Unavailable', kaggle && kaggle.match_count ? 'var(--ok)' : 'var(--magenta)');
             setStatusPill('mapping-status-label', mappingPct >= 80 ? 'Complete' : mappingPct >= 30 ? 'In progress' : 'Needs work', mappingPct >= 80 ? 'var(--ok)' : mappingPct >= 30 ? 'var(--warn)' : 'var(--magenta)');
             renderSourceRows('kaggle-source-rows', [
@@ -1948,10 +1948,11 @@
                 ['Last refresh', 'Current snapshot'],
             ]);
             renderSourceRows('mapping-source-rows', [
-                ['Total players', mapping ? fmtNumber(mapping.total) : '0'],
-                ['Fully mapped', mapping ? fmtNumber(mapping.fully_mapped) : '0'],
+                ['Test players', mapping ? fmtNumber(mapping.mappable) : '0'],
+                ['Mapped', mapping ? fmtNumber(mapping.fully_mapped) : '0'],
                 ['Coverage', mapping ? fmtPct(mappingPct) : '0%'],
-                ['Unresolved', mapping ? fmtNumber((mapping.total || 0) - (mapping.fully_mapped || 0)) : '0'],
+                ['Unmatched', mapping ? fmtNumber((mapping.mappable || 0) - (mapping.fully_mapped || 0)) : '0'],
+                ['Non-Test players', mapping ? fmtNumber((mapping.total || 0) - (mapping.mappable || 0)) : '0'],
             ]);
         }
 
