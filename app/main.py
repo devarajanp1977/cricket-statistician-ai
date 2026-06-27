@@ -167,8 +167,6 @@ _mount_frontend_route("/data", "ops.html")
 _mount_frontend_route("/knowledge", "ops.html")
 _mount_frontend_route("/usage", "ops.html")
 _mount_frontend_route("/settings", "ops.html")
-# Temporary preview of the restyled chat/landing page (review before promoting to /).
-_mount_frontend_route("/preview", "index_preview.html")
 
 
 @app.post("/api/ask", response_model=AskResponse)
